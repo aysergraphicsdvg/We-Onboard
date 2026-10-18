@@ -3,14 +3,15 @@ declare(strict_types=1);
 
 /**
  * We Onboard API foundation.
- * This API is not production-ready for authenticated/admin workflows yet.
- * Requires PHP 8.2+ and pdo_mysql.
+ * Starter public endpoints only; authenticated workflows are not production-ready yet.
+ * Requires PHP 8.2+, pdo_mysql and mbstring.
  */
 
 header('Content-Type: application/json; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
 header('Referrer-Policy: no-referrer');
 header('Cache-Control: no-store');
+header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
 
 function respond(int $status, array $payload): never {
     http_response_code($status);
@@ -37,14 +38,18 @@ function readJsonBody(): array {
         respond(413, ['ok' => false, 'error' => ['code' => 'BODY_TOO_LARGE', 'message' => 'Request body is too large.']]);
     }
     $decoded = json_decode($raw, true);
-    if (!is_array($decoded)) {
+    if (!is_array($decoded) || array_is_list($decoded)) {
         respond(400, ['ok' => false, 'error' => ['code' => 'INVALID_JSON', 'message' => 'Send a valid JSON object.']]);
     }
     return $decoded;
 }
 
 function requiredString(array $data, string $key, int $maxLength): string {
-    $value = trim((string)($data[$key] ?? ''));
+    $raw = $data[$key] ?? '';
+    if (!is_string($raw) && !is_numeric($raw)) {
+        respond(422, ['ok' => false, 'error' => ['code' => 'VALIDATION_ERROR', 'message' => 'Please check the required fields.']]);
+    }
+    $value = trim((string)$raw);
     if ($value === '' || mb_strlen($value) > $maxLength) {
         respond(422, ['ok' => false, 'error' => ['code' => 'VALIDATION_ERROR', 'message' => 'Please check the required fields.']]);
     }
@@ -52,7 +57,11 @@ function requiredString(array $data, string $key, int $maxLength): string {
 }
 
 function optionalString(array $data, string $key, int $maxLength): ?string {
-    $value = trim((string)($data[$key] ?? ''));
+    $raw = $data[$key] ?? '';
+    if (!is_string($raw) && !is_numeric($raw)) {
+        respond(422, ['ok' => false, 'error' => ['code' => 'VALIDATION_ERROR', 'message' => 'A field has an invalid format.']]);
+    }
+    $value = trim((string)$raw);
     if ($value === '') return null;
     if (mb_strlen($value) > $maxLength) {
         respond(422, ['ok' => false, 'error' => ['code' => 'VALIDATION_ERROR', 'message' => 'A field exceeds the allowed length.']]);
@@ -61,8 +70,18 @@ function optionalString(array $data, string $key, int $maxLength): ?string {
 }
 
 function publicId(): string {
-    // Opaque identifier for display; database auto-increment IDs remain private.
+    // Opaque display identifier; database auto-increment IDs remain internal.
     return strtoupper(substr(bin2hex(random_bytes(16)), 0, 26));
+}
+
+function recordConsent(PDO $pdo, ?int $userId, string $subjectType, string $subjectPublicId, array $data): void {
+    $noticeVersion = optionalString($data, 'consentTextVersion', 40) ?? 'v1';
+    $language = (string)($data['preferredLanguage'] ?? 'en');
+    if (!in_array($language, ['en', 'hi', 'kn', 'te', 'ta', 'ur'], true)) $language = 'en';
+    $stmt = $pdo->prepare(
+        'INSERT INTO consent_records (public_id, user_id, subject_type, subject_public_id, purpose_key, notice_version, status, language_code) VALUES (?, ?, ?, ?, ?, ?, \'granted\', ?)'
+    );
+    $stmt->execute([publicId(), $userId, $subjectType, $subjectPublicId, 'public_form_submission', $noticeVersion, $language]);
 }
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -124,13 +143,16 @@ try {
         }
 
         $id = publicId();
+        $pdo->beginTransaction();
         $stmt = $pdo->prepare(
             'INSERT INTO enquiries (public_id, full_name, company_name, email, phone, city, enquiry_type, service_required, message, source, utm_source, utm_medium, utm_campaign, consent_given, consent_text_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)'
         );
         $stmt->execute([$id, $fullName, $companyName, $email, $phone, $city, $enquiryType, $serviceRequired, $message, $source, $utmSource, $utmMedium, $utmCampaign, optionalString($data, 'consentTextVersion', 40) ?? 'v1']);
+        recordConsent($pdo, null, 'enquiry', $id, $data);
 
         $audit = $pdo->prepare('INSERT INTO audit_events (event_id, action, entity_type, entity_public_id, details) VALUES (?, ?, ?, ?, ?)');
         $audit->execute([publicId(), 'public_enquiry_created', 'enquiry', $id, json_encode(['city' => $city, 'enquiryType' => $enquiryType], JSON_UNESCAPED_UNICODE)]);
+        $pdo->commit();
 
         respond(201, ['ok' => true, 'data' => ['id' => $id, 'status' => 'new', 'message' => 'Your enquiry has been received.']]);
     }
@@ -141,7 +163,7 @@ try {
         $phone = requiredString($data, 'phone', 20);
         $city = requiredString($data, 'city', 120);
         $role = (string)($data['preferredRole'] ?? 'team_member');
-        $allowedRoles = ['team_member', 'team_leader', 'manager', 'city_regional_head'];
+        $allowedRoles = ['trainee', 'team_member', 'team_leader', 'manager', 'city_regional_head'];
         if (!in_array($role, $allowedRoles, true)) {
             respond(422, ['ok' => false, 'error' => ['code' => 'INVALID_ROLE', 'message' => 'Select a valid role.']]);
         }
@@ -160,15 +182,24 @@ try {
 
         $id = publicId();
         $pdo->beginTransaction();
-        $userStmt = $pdo->prepare('INSERT INTO users (public_id, email, phone_e164, full_name, user_type, status) VALUES (?, ?, ?, ?, \'freelancer\', \'pending\')');
-        $userStmt->execute([$id, $email, $phone, $fullName]);
+        $userStmt = $pdo->prepare('INSERT INTO users (public_id, email, phone_e164, full_name, preferred_language, status) VALUES (?, ?, ?, ?, ?, \'pending\')');
+        $userStmt->execute([$id, $email, $phone, $fullName, $language]);
         $userId = (int)$pdo->lastInsertId();
 
-        $profileStmt = $pdo->prepare('INSERT INTO freelancer_profiles (user_id, preferred_role, city, state, preferred_language, consent_given, consent_text_version) VALUES (?, ?, ?, ?, ?, 1, ?)');
-        $profileStmt->execute([$userId, $role, $city, $state, $language, optionalString($data, 'consentTextVersion', 40) ?? 'v1']);
+        $profileStmt = $pdo->prepare('INSERT INTO freelancer_profiles (user_id, role_interest, current_rank, city, state, preferred_language, onboarding_status) VALUES (?, ?, \'trainee\', ?, ?, ?, \'submitted\')');
+        $profileStmt->execute([$userId, $role, $city, $state, $language]);
 
-        $audit = $pdo->prepare('INSERT INTO audit_events (event_id, action, entity_type, entity_public_id, details) VALUES (?, ?, ?, ?, ?)');
-        $audit->execute([publicId(), 'freelancer_registration_submitted', 'user', $id, json_encode(['city' => $city, 'preferredRole' => $role], JSON_UNESCAPED_UNICODE)]);
+        $roleStmt = $pdo->prepare('SELECT id FROM roles WHERE role_key = \'trainee\' LIMIT 1');
+        $roleStmt->execute();
+        $traineeRoleId = $roleStmt->fetchColumn();
+        if ($traineeRoleId !== false) {
+            $assignRole = $pdo->prepare('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)');
+            $assignRole->execute([$userId, (int)$traineeRoleId]);
+        }
+
+        recordConsent($pdo, $userId, 'user', $id, $data);
+        $audit = $pdo->prepare('INSERT INTO audit_events (event_id, actor_user_id, action, entity_type, entity_public_id, details) VALUES (?, ?, ?, ?, ?, ?)');
+        $audit->execute([publicId(), $userId, 'freelancer_registration_submitted', 'user', $id, json_encode(['city' => $city, 'roleInterest' => $role], JSON_UNESCAPED_UNICODE)]);
         $pdo->commit();
 
         respond(201, ['ok' => true, 'data' => ['id' => $id, 'status' => 'submitted', 'message' => 'Your registration has been received.']]);
