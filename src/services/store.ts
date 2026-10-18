@@ -62,9 +62,26 @@ function loadState(): AppState {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
+      const loadedBanners = (parsed.heroBanners || initialHeroBanners).map((b: HeroBanner) => {
+        if (b.id === 'banner-5' && (b.ctaText?.includes('Eligibility') || b.eyebrow?.includes('MSME SUPPORT'))) {
+          return {
+            ...b,
+            eyebrow: 'GOVERNMENT DEPARTMENTS & IMPLEMENTING AGENCIES',
+            heading: 'On-ground execution for',
+            headingHighlight: 'government schemes & PSUs.',
+            description: 'Partner with We Onboard for field mobilization, Udyam, PM Vishwakarma, ONDC seller drives, and cluster compliance audits with live geo-tagged dashboards.',
+            ctaText: 'Partner with Govt Desk',
+            ctaLink: '#msme',
+            secondaryCtaText: 'Speak to Nodal Director',
+            trustPoints: ['Geo-tagged verification', 'Live department dashboards', 'Transparent audit trails']
+          };
+        }
+        return b;
+      });
+
       return {
         settings: parsed.settings || initialSiteSettings,
-        heroBanners: parsed.heroBanners || initialHeroBanners,
+        heroBanners: loadedBanners,
         services: parsed.services || initialServices,
         faqs: parsed.faqs || initialFaqs,
         enquiries: parsed.enquiries || initialEnquiries,

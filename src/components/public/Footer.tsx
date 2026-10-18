@@ -152,7 +152,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
               </button>
             </div>
 
-            <p>© 2026 We Onboard. All rights reserved.</p>
+            <p>© 2026 We Onboard. Founded by Muhammd Ali Shoaib and Umme Morsi. All rights reserved.</p>
           </div>
 
         </div>
