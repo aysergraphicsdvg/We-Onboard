@@ -86,6 +86,8 @@ Options -Indexes
  */
 
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+
+// Explicitly approved production and development origins
 $allowedOrigins = [
     'https://weonboard.in',
     'https://www.weonboard.in',
@@ -97,25 +99,51 @@ $allowedOrigins = [
     'http://127.0.0.1:5173'
 ];
 
-$isAllowed = false;
-if (in_array($origin, $allowedOrigins, true)) {
-    $isAllowed = true;
-} elseif (preg_match('/^https:\\/\\/[a-z0-9\\-]+\\.run\\.app$/', $origin)) {
-    // Development / Google Cloud Run preview environments
-    $isAllowed = true;
+// Optional: allow explicit, non-wildcard additional origins via server environment
+$extraOrigins = getenv('ADDITIONAL_ALLOWED_ORIGINS') ?: ($_ENV['ADDITIONAL_ALLOWED_ORIGINS'] ?? '');
+if (!empty($extraOrigins)) {
+    $parsedExtras = array_filter(array_map('trim', explode(',', $extraOrigins)));
+    foreach ($parsedExtras as $extra) {
+        if (preg_match('#^https?://[a-zA-Z0-9\\-\\.]+(:\\d+)?$#', $extra)) {
+            $allowedOrigins[] = $extra;
+        }
+    }
 }
 
-if ($isAllowed && !empty($origin)) {
+$isAllowed = (!empty($origin) && in_array($origin, $allowedOrigins, true));
+
+// Handle CORS Preflight OPTIONS requests
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    if (!empty($origin) && !$isAllowed) {
+        // Explicit rejection for unapproved origins
+        http_response_code(403);
+        header('Content-Type: application/json; charset=UTF-8');
+        echo json_encode(['error' => 'CORS origin not allowed']);
+        exit;
+    }
+
+    if ($isAllowed) {
+        header("Access-Control-Allow-Origin: $origin");
+        header("Access-Control-Allow-Credentials: true");
+        header("Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE");
+        header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, X-CSRF-Token, X-Idempotency-Key");
+        header("Access-Control-Max-Age: 86400");
+        header("Vary: Origin");
+        http_response_code(204);
+        exit;
+    }
+
+    http_response_code(204);
+    exit;
+}
+
+// For actual requests
+if ($isAllowed) {
     header("Access-Control-Allow-Origin: $origin");
     header("Access-Control-Allow-Credentials: true");
     header("Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE");
     header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, X-CSRF-Token, X-Idempotency-Key");
-    header("Access-Control-Max-Age: 86400");
-}
-
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(204);
-    exit;
+    header("Vary: Origin");
 }
 `
     },
@@ -144,12 +172,29 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-// Database Credentials (Set via Hostinger hPanel -> MySQL Databases)
-define('DB_HOST', getenv('DB_HOST') ?: 'localhost');
-define('DB_NAME', getenv('DB_NAME') ?: 'u123456789_weonboard');
-define('DB_USER', getenv('DB_USER') ?: 'u123456789_admin');
-define('DB_PASS', getenv('DB_PASS') ?: 'YourStrongDbPasswordHere');
+// Database Credentials (Must be explicitly configured via server environment or config/db_credentials.php)
+$dbHost = getenv('DB_HOST') ?: ($_ENV['DB_HOST'] ?? ($_SERVER['DB_HOST'] ?? 'localhost'));
+$dbName = getenv('DB_NAME') ?: ($_ENV['DB_NAME'] ?? ($_SERVER['DB_NAME'] ?? ''));
+$dbUser = getenv('DB_USER') ?: ($_ENV['DB_USER'] ?? ($_SERVER['DB_USER'] ?? ''));
+$dbPass = getenv('DB_PASS') ?: ($_ENV['DB_PASS'] ?? ($_SERVER['DB_PASS'] ?? ''));
+
+$localDbConfig = __DIR__ . '/db_credentials.php';
+if (file_exists($localDbConfig)) {
+    $creds = include $localDbConfig;
+    if (is_array($creds)) {
+        $dbHost = $creds['DB_HOST'] ?? $dbHost;
+        $dbName = $creds['DB_NAME'] ?? $dbName;
+        $dbUser = $creds['DB_USER'] ?? $dbUser;
+        $dbPass = $creds['DB_PASS'] ?? $dbPass;
+    }
+}
+
+define('DB_HOST', $dbHost);
+define('DB_NAME', $dbName);
+define('DB_USER', $dbUser);
+define('DB_PASS', $dbPass);
 define('DB_CHARSET', 'utf8mb4');
+define('ALLOW_WEB_INSTALL', (getenv('ALLOW_WEB_INSTALL') === 'true' || (isset($_ENV['ALLOW_WEB_INSTALL']) && $_ENV['ALLOW_WEB_INSTALL'] === 'true')));
 
 // Application Paths & URLs
 define('APP_NAME', 'We Onboard');
@@ -178,7 +223,7 @@ function sanitize_output($str) {
     },
     {
       path: 'config/database.php',
-      description: 'PDO Database singleton with UTF-8mb4 and prepared statement enforcement',
+      description: 'PDO Database singleton with UTF-8mb4 and fail-closed credential validation',
       content: `<?php
 require_once __DIR__ . '/config.php';
 
@@ -187,6 +232,11 @@ class Database {
 
     public static function getConnection(): PDO {
         if (self::$instance === null) {
+            if (empty(DB_NAME) || empty(DB_USER) || DB_PASS === '') {
+                error_log("[SECURITY/CONFIG ERROR] Database credentials are not configured on this server. DB_NAME, DB_USER, and DB_PASS must be provided via environment variables or server config.");
+                throw new RuntimeException("Database configuration is missing or incomplete. Server administrator must configure credentials.");
+            }
+
             $dsn = "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=" . DB_CHARSET;
             $options = [
                 PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
@@ -196,8 +246,8 @@ class Database {
             try {
                 self::$instance = new PDO($dsn, DB_USER, DB_PASS, $options);
             } catch (PDOException $e) {
-                error_log("Database connection failure: " . $e->getMessage());
-                throw $e;
+                error_log("[Database Connection Error] Host: " . DB_HOST . ", DB: " . DB_NAME . ", User: " . DB_USER . " - " . $e->getMessage());
+                throw new RuntimeException("Database connection failure. Please verify server connectivity.");
             }
         }
         return self::$instance;
@@ -478,23 +528,41 @@ SET FOREIGN_KEY_CHECKS = 1;
     },
     {
       path: 'database/migrations/001_upgrade_v2.sql',
-      description: 'Reversible non-destructive migration script for existing Hostinger databases',
-      content: `-- We Onboard Reversible Migration 001
--- Safe update script for existing installations without data loss
+      description: 'Reversible non-destructive migration 001 for site settings and audit log index (MySQL 8.0 & MariaDB compatible)',
+      content: `-- We Onboard Safe Migration 001: Upgrade Settings & Indices
+-- Compatible with MySQL 5.7+, MySQL 8.0+, and MariaDB 10.x+
+-- Safe for repeated execution without data loss
 
--- Check and add header_logo_url / footer_logo_url in site_settings
+-- 1. Ensure site_settings keys exist
 INSERT INTO site_settings (setting_key, setting_value) 
 VALUES ('headerLogoUrl', ''), ('footerLogoUrl', '')
 ON DUPLICATE KEY UPDATE setting_key = setting_key;
 
--- Ensure audit_logs index
-CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_logs (created_at);
+-- 2. Safely create idx_audit_time on audit_logs if not already present
+-- Note: MySQL 8.0 does not support 'CREATE INDEX IF NOT EXISTS'.
+SET @exist := (
+    SELECT COUNT(*) FROM information_schema.statistics 
+    WHERE table_schema = DATABASE() 
+      AND table_name = 'audit_logs' 
+      AND index_name = 'idx_audit_time'
+);
+SET @sqlstmt := IF(@exist = 0, 
+    'CREATE INDEX \`idx_audit_time\` ON \`audit_logs\` (\`created_at\`)', 
+    'SELECT "Index idx_audit_time already exists on audit_logs" AS status'
+);
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 `
     },
     {
       path: 'database/migrations/002_idempotency_and_constraints.sql',
-      description: 'Non-destructive migration 002 for idempotency and database constraints',
+      description: 'Non-destructive migration 002 for idempotency and duplicate prevention (MySQL 8.0 & MariaDB compatible)',
       content: `-- We Onboard Non-Destructive Migration 002: Idempotency & Duplicate Prevention
+-- Compatible with MySQL 5.7+, MySQL 8.0+, and MariaDB 10.x+
+-- Safe for repeated execution without data loss
+
+-- 1. Create idempotency_keys table for concurrent & repeated submission protection
 CREATE TABLE IF NOT EXISTS \`idempotency_keys\` (
     \`id\` INT AUTO_INCREMENT PRIMARY KEY,
     \`idempotency_key\` VARCHAR(64) NOT NULL UNIQUE,
@@ -506,87 +574,216 @@ CREATE TABLE IF NOT EXISTS \`idempotency_keys\` (
     INDEX idx_idem_time (\`created_at\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE INDEX IF NOT EXISTS idx_converted_client ON enquiries (converted_client_id);
+-- 2. Safely create idx_converted_client on enquiries if column exists and index is absent
+SET @exist := (
+    SELECT COUNT(*) FROM information_schema.statistics 
+    WHERE table_schema = DATABASE() 
+      AND table_name = 'enquiries' 
+      AND index_name = 'idx_converted_client'
+);
+SET @col_exist := (
+    SELECT COUNT(*) FROM information_schema.columns 
+    WHERE table_schema = DATABASE() 
+      AND table_name = 'enquiries' 
+      AND column_name = 'converted_client_id'
+);
+SET @sqlstmt := IF(@exist = 0 AND @col_exist > 0, 
+    'CREATE INDEX \`idx_converted_client\` ON \`enquiries\` (\`converted_client_id\`)', 
+    'SELECT "Index idx_converted_client already exists or converted_client_id column not present" AS status'
+);
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 `
     },
     {
       path: 'install.php',
-      description: 'One-time secure web installer with database verification & Super Admin creation',
+      description: 'Secure installer with production web disabling, one-time token authorization, CSRF validation, permanent lock check, prevention of admin password resets, and generic error reporting',
       content: `<?php
 /**
- * We Onboard Secure Web Installer
- * Runs once to initialize MySQL database and create the Super Admin account.
+ * We Onboard Secure Database Installer
+ * Designed for CLI execution or tightly guarded non-production setup.
+ * Web-based execution is disabled by default in production.
  */
 session_start();
 
 $lock_file = __DIR__ . '/config/install.lock';
 
+// 1. Strict Permanent Lock Check
 if (file_exists($lock_file)) {
-    die("<h2>Installation Completed</h2><p>The system is already installed and locked for security. To re-run, remove <code>config/install.lock</code>.</p><p><a href='/admin/login.php'>Go to Admin Login &rarr;</a></p>");
+    if (php_sapi_name() === 'cli') {
+        echo "LOCKED: The system is already installed (config/install.lock exists).\\n";
+        exit(0);
+    }
+    http_response_code(403);
+    die("<h2>Installation Locked</h2><p>The system is already installed and permanently locked for security.</p><p><a href='/admin/login.php'>Go to Admin Login &rarr;</a></p>");
 }
 
+// 2. Check Execution Mode & Web Installer Authorization
+$isCli = (php_sapi_name() === 'cli');
+
+require_once __DIR__ . '/config/config.php';
+
+if (!$isCli) {
+    if (!defined('ALLOW_WEB_INSTALL') || !ALLOW_WEB_INSTALL) {
+        http_response_code(403);
+        die("<!DOCTYPE html><html><head><title>Access Denied</title></head><body style='font-family:sans-serif;padding:40px;line-height:1.6;'><h2 style='color:#b91c1c;'>Web Installation Disabled</h2><p>For security, web-based installation is disabled in production. Please run the installer via SSH / CLI:</p><pre style='background:#f1f5f9;padding:12px;border-radius:6px;'>php scripts/install.php</pre><p>Or provision an administrator via:</p><pre style='background:#f1f5f9;padding:12px;border-radius:6px;'>php scripts/create_super_admin.php \\\"Admin Name\\\" \\\"admin@weonboard.in\\\" \\\"StrongPassword\\\"</pre></body></html>");
+    }
+
+    $requiredKey = getenv('INSTALL_KEY') ?: 'setup-authorized-token';
+    $providedKey = $_GET['key'] ?? ($_POST['install_key'] ?? '');
+    if (empty($providedKey) || !hash_equals($requiredKey, $providedKey)) {
+        http_response_code(403);
+        die("<!DOCTYPE html><html><head><title>Installer Authorization Required</title></head><body style='font-family:sans-serif;padding:40px;'><h2 style='color:#b91c1c;'>Installer Authorization Required</h2><p>Provide the authorization key via <code>?key=...</code> to access this temporary non-production installer.</p></body></html>");
+    }
+
+    if (empty($_SESSION['installer_csrf'])) {
+        $_SESSION['installer_csrf'] = bin2hex(random_bytes(32));
+    }
+}
+
+// 3. CLI Automated Execution Mode
+if ($isCli) {
+    echo "========================================================\\n";
+    echo "WE ONBOARD CLI INSTALLER\\n";
+    echo "========================================================\\n";
+
+    $host = getenv('DB_HOST') ?: (defined('DB_HOST') && DB_HOST ? DB_HOST : 'localhost');
+    $name = getenv('DB_NAME') ?: (defined('DB_NAME') && DB_NAME ? DB_NAME : '');
+    $user = getenv('DB_USER') ?: (defined('DB_USER') && DB_USER ? DB_USER : '');
+    $pass = getenv('DB_PASS') ?: (defined('DB_PASS') && DB_PASS ? DB_PASS : '');
+
+    if (empty($name) || empty($user)) {
+        echo "Enter Database Name: ";
+        $name = trim(fgets(STDIN));
+        echo "Enter Database Username: ";
+        $user = trim(fgets(STDIN));
+        echo "Enter Database Password: ";
+        $pass = trim(fgets(STDIN));
+    }
+
+    try {
+        $dsn = "mysql:host={$host};dbname={$name};charset=utf8mb4";
+        $pdo = new PDO($dsn, $user, $pass, [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
+        ]);
+
+        echo "1. Applying schema.sql...\\n";
+        $schema_sql = file_get_contents(__DIR__ . '/database/schema.sql');
+        $pdo->exec($schema_sql);
+
+        echo "2. Seeding default roles and settings...\\n";
+        $pdo->exec("INSERT IGNORE INTO roles (id, name, description) VALUES 
+            (1, 'Super Admin', 'Full system access'),
+            (2, 'Administrator', 'Standard operations access'),
+            (3, 'Enquiry Manager', 'Manage and assign enquiries'),
+            (4, 'Freelancer Coordinator', 'Manage freelancer onboarding and verifications'),
+            (5, 'Project Manager', 'Manage field projects and tasks')");
+
+        $defaultSettings = [
+            'companyName' => 'We Onboard',
+            'tagline' => 'Your ground engine for growth',
+            'phone' => '+91 96111 09490',
+            'whatsapp' => '919611109490',
+            'email' => 'mail@weonboard.in',
+            'address' => 'Indiranagar, Bangalore, Karnataka 560038',
+            'headerLogoUrl' => '',
+            'footerLogoUrl' => ''
+        ];
+        foreach ($defaultSettings as $k => $v) {
+            $stmt = $pdo->prepare("INSERT INTO site_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
+            $stmt->execute([$k, $v]);
+        }
+
+        file_put_contents($lock_file, date('Y-m-d H:i:s') . " - Installed successfully via CLI\\n");
+        echo "SUCCESS: Database installed and locked. Run scripts/create_super_admin.php to create your Super Admin.\\n";
+        exit(0);
+    } catch (Exception $e) {
+        error_log("[CLI Installer Error] " . $e->getMessage());
+        echo "ERROR: Database installation failed. Diagnostic logged privately.\\n";
+        exit(1);
+    }
+}
+
+// 4. Guarded Non-Production Web Execution Mode
 $error = '';
 $success = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $db_host = trim($_POST['db_host'] ?? 'localhost');
-    $db_name = trim($_POST['db_name'] ?? '');
-    $db_user = trim($_POST['db_user'] ?? '');
-    $db_pass = trim($_POST['db_pass'] ?? '');
-
-    $admin_name = trim($_POST['admin_name'] ?? 'Muhammad Ali Shoaib');
-    $admin_email = trim($_POST['admin_email'] ?? 'admin@weonboard.in');
-    $admin_pass = trim($_POST['admin_pass'] ?? '');
-
-    if (empty($db_name) || empty($db_user) || empty($admin_email) || strlen($admin_pass) < 8) {
-        $error = 'Please fill all required fields. Password must be at least 8 characters.';
+    $csrf = $_POST['csrf_token'] ?? '';
+    if (!hash_equals($_SESSION['installer_csrf'] ?? '', $csrf)) {
+        http_response_code(403);
+        $error = 'CSRF validation failed. Please refresh the page.';
     } else {
-        try {
-            $dsn = "mysql:host={$db_host};dbname={$db_name};charset=utf8mb4";
-            $pdo = new PDO($dsn, $db_user, $db_pass, [
-                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
-            ]);
+        $db_host = trim($_POST['db_host'] ?? 'localhost');
+        $db_name = trim($_POST['db_name'] ?? '');
+        $db_user = trim($_POST['db_user'] ?? '');
+        $db_pass = trim($_POST['db_pass'] ?? '');
 
-            // Execute schema
-            $schema_sql = file_get_contents(__DIR__ . '/database/schema.sql');
-            $pdo->exec($schema_sql);
+        $admin_name = trim($_POST['admin_name'] ?? '');
+        $admin_email = trim($_POST['admin_email'] ?? '');
+        $admin_pass = trim($_POST['admin_pass'] ?? '');
 
-            // Seed Roles
-            $pdo->exec("INSERT IGNORE INTO roles (id, name, description) VALUES 
-                (1, 'Super Admin', 'Full system access'),
-                (2, 'Administrator', 'Standard operations access'),
-                (3, 'Enquiry Manager', 'Manage and assign enquiries'),
-                (4, 'Freelancer Coordinator', 'Manage freelancer onboarding and verifications'),
-                (5, 'Project Manager', 'Manage field projects and tasks')");
+        if (empty($db_name) || empty($db_user) || empty($admin_email) || strlen($admin_pass) < 12) {
+            $error = 'Please fill all required fields. Administrator password must be at least 12 characters.';
+        } elseif (!filter_var($admin_email, FILTER_VALIDATE_EMAIL)) {
+            $error = 'Please provide a valid administrator email address.';
+        } else {
+            try {
+                $dsn = "mysql:host={$db_host};dbname={$db_name};charset=utf8mb4";
+                $pdo = new PDO($dsn, $db_user, $db_pass, [
+                    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
+                ]);
 
-            // Seed Super Admin
-            $hashed_pass = password_hash($admin_pass, PASSWORD_BCRYPT);
-            $stmt = $pdo->prepare("INSERT INTO admin_users (name, email, password_hash, role_id, is_active) VALUES (?, ?, ?, 1, 1) ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash)");
-            $stmt->execute([$admin_name, $admin_email, $hashed_pass]);
+                $schema_sql = file_get_contents(__DIR__ . '/database/schema.sql');
+                $pdo->exec($schema_sql);
 
-            // Seed default settings
-            $defaultSettings = [
-                'companyName' => 'We Onboard',
-                'tagline' => 'Your ground engine for growth',
-                'phone' => '+91 96111 09490',
-                'whatsapp' => '919611109490',
-                'email' => 'mail@weonboard.in',
-                'address' => 'Indiranagar, Bangalore, Karnataka 560038',
-                'headerLogoUrl' => '',
-                'footerLogoUrl' => ''
-            ];
-            foreach ($defaultSettings as $k => $v) {
-                $stmt = $pdo->prepare("INSERT INTO site_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
-                $stmt->execute([$k, $v]);
+                $pdo->exec("INSERT IGNORE INTO roles (id, name, description) VALUES 
+                    (1, 'Super Admin', 'Full system access'),
+                    (2, 'Administrator', 'Standard operations access'),
+                    (3, 'Enquiry Manager', 'Manage and assign enquiries'),
+                    (4, 'Freelancer Coordinator', 'Manage freelancer onboarding and verifications'),
+                    (5, 'Project Manager', 'Manage field projects and tasks')");
+
+                // Never allow resetting existing admin via installer
+                $checkAdmin = $pdo->prepare("SELECT id FROM admin_users WHERE email = ? LIMIT 1");
+                $checkAdmin->execute([$admin_email]);
+                if ($checkAdmin->fetch()) {
+                    throw new RuntimeException("An administrator with this email already exists. Overwriting existing administrator passwords via the web installer is strictly prohibited.");
+                }
+
+                $hashed_pass = password_hash($admin_pass, PASSWORD_BCRYPT, ['cost' => 12]);
+                $stmt = $pdo->prepare("INSERT INTO admin_users (name, email, password_hash, role_id, is_active) VALUES (?, ?, ?, 1, 1)");
+                $stmt->execute([$admin_name, $admin_email, $hashed_pass]);
+
+                $defaultSettings = [
+                    'companyName' => 'We Onboard',
+                    'tagline' => 'Your ground engine for growth',
+                    'phone' => '+91 96111 09490',
+                    'whatsapp' => '919611109490',
+                    'email' => 'mail@weonboard.in',
+                    'address' => 'Indiranagar, Bangalore, Karnataka 560038',
+                    'headerLogoUrl' => '',
+                    'footerLogoUrl' => ''
+                ];
+                foreach ($defaultSettings as $k => $v) {
+                    $stmt = $pdo->prepare("INSERT INTO site_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
+                    $stmt->execute([$k, $v]);
+                }
+
+                file_put_contents($lock_file, date('Y-m-d H:i:s') . " - Installed successfully by " . $admin_email . " [Remote IP: " . ($_SERVER['REMOTE_ADDR'] ?? 'Unknown') . "]\\n");
+
+                $success = "We Onboard installed successfully! The installer has been permanently locked.";
+            } catch (Exception $e) {
+                error_log("[Web Installer Error] " . $e->getMessage());
+                if ($e instanceof RuntimeException && strpos($e->getMessage(), 'administrator with this email already exists') !== false) {
+                    $error = $e->getMessage();
+                } else {
+                    $error = "Installation failed due to a database or configuration error. Please verify credentials and check the server error logs.";
+                }
             }
-
-            // Write lock file
-            file_put_contents($lock_file, date('Y-m-d H:i:s') . " - Installed successfully by " . $admin_email);
-
-            $success = "We Onboard installed successfully! You can now log into your Admin Panel.";
-        } catch (Exception $e) {
-            $error = "Installation Error: " . $e->getMessage();
         }
     }
 }
@@ -595,7 +792,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>We Onboard &mdash; Database Installer</title>
+    <title>We Onboard &mdash; Guarded Non-Production Installer</title>
     <style>
         body { font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; background: #02167F; color: #1e293b; margin: 0; padding: 40px 20px; }
         .box { max-width: 580px; margin: 0 auto; background: #fff; padding: 36px; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.25); }
@@ -606,12 +803,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         input { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; }
         .btn { display: block; width: 100%; background: #FFD014; color: #02167F; font-weight: 700; border: none; padding: 14px; border-radius: 8px; font-size: 15px; cursor: pointer; margin-top: 24px; }
         .btn:hover { background: #e6bc0f; }
+        .badge { display: inline-block; background: #fee2e2; color: #991b1b; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
     </style>
 </head>
 <body>
     <div class="box">
-        <h1>We Onboard Installer</h1>
-        <p style="color: #64748b; font-size: 14px;">Setup MySQL database and create the initial Super Administrator account.</p>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
+            <h1 style="margin:0;">We Onboard Installer</h1>
+            <span class="badge">Non-Production</span>
+        </div>
+        <p style="color: #64748b; font-size: 14px;">One-time guarded setup of MySQL database and initial Super Administrator account.</p>
 
         <?php if ($error): ?>
             <div class="alert-error"><?= htmlspecialchars($error) ?></div>
@@ -626,30 +827,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
         <?php else: ?>
             <form method="POST">
-                <h3 style="color: #02167F; font-size: 16px; margin-top: 18px;">1. MySQL Database Details (Hostinger hPanel)</h3>
+                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['installer_csrf'] ?? '') ?>">
+                <input type="hidden" name="install_key" value="<?= htmlspecialchars($providedKey ?? '') ?>">
+
+                <h3 style="color: #02167F; font-size: 16px; margin-top: 18px;">1. MySQL Database Details</h3>
                 <label>Database Host</label>
                 <input type="text" name="db_host" value="localhost" required>
 
                 <label>Database Name</label>
-                <input type="text" name="db_name" placeholder="e.g. u123456789_weonboard" required>
+                <input type="text" name="db_name" placeholder="Database Name" required>
 
                 <label>Database Username</label>
-                <input type="text" name="db_user" placeholder="e.g. u123456789_admin" required>
+                <input type="text" name="db_user" placeholder="Database Username" required>
 
                 <label>Database Password</label>
-                <input type="password" name="db_pass" placeholder="Your database password">
+                <input type="password" name="db_pass" placeholder="Database Password">
 
                 <h3 style="color: #02167F; font-size: 16px; margin-top: 24px;">2. Super Admin Credentials</h3>
                 <label>Full Name</label>
-                <input type="text" name="admin_name" value="Muhammad Ali Shoaib" required>
+                <input type="text" name="admin_name" placeholder="Administrator Name" required>
 
                 <label>Admin Email</label>
-                <input type="email" name="admin_email" value="admin@weonboard.in" required>
+                <input type="email" name="admin_email" placeholder="admin@weonboard.in" required>
 
-                <label>Admin Password (min. 8 characters)</label>
-                <input type="password" name="admin_pass" required>
+                <label>Admin Password (min. 12 characters)</label>
+                <input type="password" name="admin_pass" minlength="12" required>
 
-                <button type="submit" class="btn">Run Installation & Secure System &rarr;</button>
+                <button type="submit" class="btn">Run Installation & Lock System &rarr;</button>
             </form>
         <?php endif; ?>
     </div>
@@ -1119,7 +1323,7 @@ echo json_encode([
     },
     {
       path: 'api/v1/enquiry.php',
-      description: 'API v1: Public business & enterprise enquiry handler (Prepared statements, validation, transaction & audit)',
+      description: 'API v1: Public business & enterprise enquiry handler (Prepared statements, validation, transaction, audit & hardened idempotency)',
       content: `<?php
 $rootCandidates = [dirname(__DIR__, 2), dirname(__DIR__, 3), dirname(__DIR__, 1)];
 $root = '';
@@ -1169,8 +1373,8 @@ if (empty($fullName) || empty($phone)) {
 }
 
 // Clean phone (digits and optional leading +)
-$cleanPhone = preg_replace('/[^\d+]/', '', $phone);
-if (strlen(preg_replace('/\D/', '', $cleanPhone)) < 10) {
+$cleanPhone = preg_replace('/[^\\d+]/', '', $phone);
+if (strlen(preg_replace('/\\D/', '', $cleanPhone)) < 10) {
     http_response_code(400);
     echo json_encode(['success' => false, 'error' => 'Please provide a valid 10-digit phone number.']);
     exit;
@@ -1187,28 +1391,52 @@ if (!in_array($enquiryType, $allowedEnquiryTypes, true)) {
     $enquiryType = 'Business';
 }
 
+$currentEndpoint = 'enquiry';
+$currentPayloadHash = hash('sha256', !empty($rawInput) ? $rawInput : json_encode($data));
+
 $db = null;
 try {
     $db = Database::getConnection();
 
-    // 1. Idempotency Check
+    // 1. Strict Idempotency Check & Conflict Resolution
     if (!empty($idempotencyKey)) {
-        $idemStmt = $db->prepare("SELECT response_json FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1");
-        $idemStmt->execute([$idempotencyKey]);
-        $cached = $idemStmt->fetchColumn();
-        if ($cached) {
-            echo $cached;
+        if (!preg_match('/^[A-Za-z0-9_\\-]{8,64}$/', $idempotencyKey)) {
+            http_response_code(400);
+            echo json_encode([
+                'success' => false,
+                'error' => 'Invalid idempotency key format. Must be 8-64 alphanumeric characters, underscores, or hyphens.'
+            ]);
             exit;
+        }
+
+        $idemStmt = $db->prepare("SELECT endpoint, request_payload_hash, response_json FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1");
+        $idemStmt->execute([$idempotencyKey]);
+        $cached = $idemStmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($cached) {
+            if ($cached['endpoint'] === $currentEndpoint && hash_equals($cached['request_payload_hash'], $currentPayloadHash)) {
+                header('X-Idempotency-Hit: true');
+                echo $cached['response_json'];
+                exit;
+            } else {
+                http_response_code(409);
+                echo json_encode([
+                    'success' => false,
+                    'error' => 'Idempotency conflict: The provided idempotency key has already been used with a different endpoint or request payload.'
+                ]);
+                exit;
+            }
         }
     }
 
     // 2. Prevent immediate duplicate submissions (within last 2 minutes by same phone)
-    $dupCheck = $db->prepare("SELECT id FROM enquiries WHERE phone = ? AND created_at > DATE_SUB(NOW(), INTERVAL 2 MINUTE) LIMIT 1");
+    $dupCheck = $db->prepare("SELECT enquiry_ref FROM enquiries WHERE phone = ? AND created_at > DATE_SUB(NOW(), INTERVAL 2 MINUTE) LIMIT 1");
     $dupCheck->execute([$cleanPhone]);
     $existing = $dupCheck->fetch();
     if ($existing) {
         echo json_encode([
             'success' => true,
+            'reference_id' => $existing['enquiry_ref'],
             'message' => 'Thank you! Your enquiry has already been received. Our operations team in Bangalore will contact you shortly.'
         ]);
         exit;
@@ -1234,8 +1462,8 @@ try {
     ]);
 
     if (!empty($idempotencyKey)) {
-        $db->prepare("INSERT IGNORE INTO idempotency_keys (idempotency_key, endpoint, request_payload_hash, response_json) VALUES (?, ?, ?, ?)")
-           ->execute([$idempotencyKey, 'enquiry', hash('sha256', $rawInput), $responseJson]);
+        $db->prepare("INSERT INTO idempotency_keys (idempotency_key, endpoint, request_payload_hash, response_json) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE id=id")
+           ->execute([$idempotencyKey, $currentEndpoint, $currentPayloadHash, $responseJson]);
     }
 
     $db->commit();
@@ -1252,7 +1480,7 @@ try {
     },
     {
       path: 'api/v1/freelancers/register.php',
-      description: 'API v1: Public freelancer registration endpoint with validation & duplicate check',
+      description: 'API v1: Public freelancer registration endpoint with validation, duplicate check & hardened idempotency',
       content: `<?php
 $rootCandidates = [dirname(__DIR__, 2), dirname(__DIR__, 3), dirname(__DIR__, 1)];
 $root = '';
@@ -1305,8 +1533,8 @@ $preferredRole = trim($data['preferred_role'] ?? 'Rider / Delivery Partner');
 $prevEmployer = trim($data['previous_employer'] ?? '');
 $idempotencyKey = trim($_SERVER['HTTP_X_IDEMPOTENCY_KEY'] ?? ($data['idempotency_key'] ?? ''));
 
-$cleanPhone = preg_replace('/[^\d+]/', '', $phone);
-$digits = preg_replace('/\D/', '', $cleanPhone);
+$cleanPhone = preg_replace('/[^\\d+]/', '', $phone);
+$digits = preg_replace('/\\D/', '', $cleanPhone);
 
 if (empty($fullName) || empty($cleanPhone) || empty($email) || !$isAdult || !$hasSmartphone) {
     http_response_code(400);
@@ -1326,18 +1554,41 @@ if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
     exit;
 }
 
+$currentEndpoint = 'freelancer_register';
+$currentPayloadHash = hash('sha256', !empty($rawInput) ? $rawInput : json_encode($data));
+
 $db = null;
 try {
     $db = Database::getConnection();
 
-    // 1. Idempotency Check
+    // 1. Strict Idempotency Check & Conflict Resolution
     if (!empty($idempotencyKey)) {
-        $idemStmt = $db->prepare("SELECT response_json FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1");
-        $idemStmt->execute([$idempotencyKey]);
-        $cached = $idemStmt->fetchColumn();
-        if ($cached) {
-            echo $cached;
+        if (!preg_match('/^[A-Za-z0-9_\\-]{8,64}$/', $idempotencyKey)) {
+            http_response_code(400);
+            echo json_encode([
+                'success' => false,
+                'error' => 'Invalid idempotency key format. Must be 8-64 alphanumeric characters, underscores, or hyphens.'
+            ]);
             exit;
+        }
+
+        $idemStmt = $db->prepare("SELECT endpoint, request_payload_hash, response_json FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1");
+        $idemStmt->execute([$idempotencyKey]);
+        $cached = $idemStmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($cached) {
+            if ($cached['endpoint'] === $currentEndpoint && hash_equals($cached['request_payload_hash'], $currentPayloadHash)) {
+                header('X-Idempotency-Hit: true');
+                echo $cached['response_json'];
+                exit;
+            } else {
+                http_response_code(409);
+                echo json_encode([
+                    'success' => false,
+                    'error' => 'Idempotency conflict: The provided idempotency key has already been used with a different endpoint or request payload.'
+                ]);
+                exit;
+            }
         }
     }
 
@@ -1380,8 +1631,8 @@ try {
     ]);
 
     if (!empty($idempotencyKey)) {
-        $db->prepare("INSERT IGNORE INTO idempotency_keys (idempotency_key, endpoint, request_payload_hash, response_json) VALUES (?, ?, ?, ?)")
-           ->execute([$idempotencyKey, 'freelancer_register', hash('sha256', $rawInput), $responseJson]);
+        $db->prepare("INSERT INTO idempotency_keys (idempotency_key, endpoint, request_payload_hash, response_json) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE id=id")
+           ->execute([$idempotencyKey, $currentEndpoint, $currentPayloadHash, $responseJson]);
     }
 
     $db->commit();
@@ -1395,7 +1646,7 @@ try {
         echo json_encode(['success' => false, 'error' => 'An application with this mobile number or email address has already been submitted.']);
         exit;
     }
-    error_log("Freelancer registration error: " . $e->getMessage());
+    error_log("Freelancer registration database error: " . $e->getMessage());
     http_response_code(500);
     echo json_encode(['success' => false, 'error' => 'Unable to complete registration at this time. Please try again or contact support at mail@weonboard.in.']);
 } catch (Exception $e) {
@@ -1410,7 +1661,7 @@ try {
     },
     {
       path: 'api/v1/msme_request.php',
-      description: 'API v1: Government & Nodal Agency Desk Request Endpoint',
+      description: 'API v1: Government & Nodal Agency Desk Request Endpoint with hardened idempotency',
       content: `<?php
 $rootCandidates = [dirname(__DIR__, 2), dirname(__DIR__, 3), dirname(__DIR__, 1)];
 $root = '';
@@ -1453,7 +1704,7 @@ $services = is_array($data['requested_services'] ?? null) ? implode(', ', $data[
 $description = trim($data['description'] ?? '');
 $idempotencyKey = trim($_SERVER['HTTP_X_IDEMPOTENCY_KEY'] ?? ($data['idempotency_key'] ?? ''));
 
-$cleanPhone = preg_replace('/[^\d+]/', '', $phone);
+$cleanPhone = preg_replace('/[^\\d+]/', '', $phone);
 
 if (empty($businessName) || empty($applicantName) || empty($cleanPhone)) {
     http_response_code(400);
@@ -1461,18 +1712,41 @@ if (empty($businessName) || empty($applicantName) || empty($cleanPhone)) {
     exit;
 }
 
+$currentEndpoint = 'msme_request';
+$currentPayloadHash = hash('sha256', !empty($rawInput) ? $rawInput : json_encode($data));
+
 $db = null;
 try {
     $db = Database::getConnection();
 
-    // 1. Idempotency Check
+    // 1. Strict Idempotency Check & Conflict Resolution
     if (!empty($idempotencyKey)) {
-        $idemStmt = $db->prepare("SELECT response_json FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1");
-        $idemStmt->execute([$idempotencyKey]);
-        $cached = $idemStmt->fetchColumn();
-        if ($cached) {
-            echo $cached;
+        if (!preg_match('/^[A-Za-z0-9_\\-]{8,64}$/', $idempotencyKey)) {
+            http_response_code(400);
+            echo json_encode([
+                'success' => false,
+                'error' => 'Invalid idempotency key format. Must be 8-64 alphanumeric characters, underscores, or hyphens.'
+            ]);
             exit;
+        }
+
+        $idemStmt = $db->prepare("SELECT endpoint, request_payload_hash, response_json FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1");
+        $idemStmt->execute([$idempotencyKey]);
+        $cached = $idemStmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($cached) {
+            if ($cached['endpoint'] === $currentEndpoint && hash_equals($cached['request_payload_hash'], $currentPayloadHash)) {
+                header('X-Idempotency-Hit: true');
+                echo $cached['response_json'];
+                exit;
+            } else {
+                http_response_code(409);
+                echo json_encode([
+                    'success' => false,
+                    'error' => 'Idempotency conflict: The provided idempotency key has already been used with a different endpoint or request payload.'
+                ]);
+                exit;
+            }
         }
     }
 
@@ -1506,8 +1780,8 @@ try {
     ]);
 
     if (!empty($idempotencyKey)) {
-        $db->prepare("INSERT IGNORE INTO idempotency_keys (idempotency_key, endpoint, request_payload_hash, response_json) VALUES (?, ?, ?, ?)")
-           ->execute([$idempotencyKey, 'msme_request', hash('sha256', $rawInput), $responseJson]);
+        $db->prepare("INSERT INTO idempotency_keys (idempotency_key, endpoint, request_payload_hash, response_json) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE id=id")
+           ->execute([$idempotencyKey, $currentEndpoint, $currentPayloadHash, $responseJson]);
     }
 
     $db->commit();
@@ -1736,8 +2010,92 @@ echo json_encode(['success' => false, 'authenticated' => false]);
 `
     },
     {
+      path: 'scripts/install.php',
+      description: 'Dedicated CLI Database Installer for secure SSH initialization',
+      content: `<?php
+/**
+ * We Onboard CLI Installer
+ * Safe command-line database initialization and role seeding.
+ */
+
+if (php_sapi_name() !== 'cli') {
+    http_response_code(403);
+    die("Access Denied: scripts/install.php must be executed via CLI only.\\n");
+}
+
+$lockFile = dirname(__DIR__) . '/config/install.lock';
+if (file_exists($lockFile)) {
+    echo "LOCKED: The system is already installed and locked ({$lockFile} exists).\\n";
+    exit(0);
+}
+
+require_once dirname(__DIR__) . '/config/config.php';
+
+echo "========================================================\\n";
+echo "WE ONBOARD CLI DATABASE INSTALLER\\n";
+echo "========================================================\\n";
+
+$host = defined('DB_HOST') && DB_HOST ? DB_HOST : 'localhost';
+$name = defined('DB_NAME') && DB_NAME ? DB_NAME : '';
+$user = defined('DB_USER') && DB_USER ? DB_USER : '';
+$pass = defined('DB_PASS') && DB_PASS ? DB_PASS : '';
+
+if (empty($name) || empty($user) || $pass === '') {
+    if (empty($name)) { echo "Database Name: "; $name = trim(fgets(STDIN)); }
+    if (empty($user)) { echo "Database Username: "; $user = trim(fgets(STDIN)); }
+    if ($pass === '') { echo "Database Password: "; $pass = trim(fgets(STDIN)); }
+}
+
+try {
+    $dsn = "mysql:host={$host};dbname={$name};charset=utf8mb4";
+    $pdo = new PDO($dsn, $user, $pass, [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
+    ]);
+
+    echo "1. Applying database/schema.sql...\\n";
+    $schema = file_get_contents(dirname(__DIR__) . '/database/schema.sql');
+    $pdo->exec($schema);
+
+    echo "2. Seeding default roles...\\n";
+    $pdo->exec("INSERT IGNORE INTO roles (id, name, description) VALUES 
+        (1, 'Super Admin', 'Full system access'),
+        (2, 'Administrator', 'Standard operations access'),
+        (3, 'Enquiry Manager', 'Manage and assign enquiries'),
+        (4, 'Freelancer Coordinator', 'Manage freelancer onboarding and verifications'),
+        (5, 'Project Manager', 'Manage field projects and tasks')");
+
+    echo "3. Seeding default site settings...\\n";
+    $defaultSettings = [
+        'companyName' => 'We Onboard',
+        'tagline' => 'Your ground engine for growth',
+        'phone' => '+91 96111 09490',
+        'whatsapp' => '919611109490',
+        'email' => 'mail@weonboard.in',
+        'address' => 'Indiranagar, Bangalore, Karnataka 560038',
+        'headerLogoUrl' => '',
+        'footerLogoUrl' => ''
+    ];
+    foreach ($defaultSettings as $k => $v) {
+        $stmt = $pdo->prepare("INSERT INTO site_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
+        $stmt->execute([$k, $v]);
+    }
+
+    file_put_contents($lockFile, date('Y-m-d H:i:s') . " - Installed successfully via CLI installer\\n");
+    echo "SUCCESS: Database initialized and locked.\\n";
+    echo "Next: Provision your initial administrator by running:\\n";
+    echo "  php scripts/create_super_admin.php \\\"Your Name\\\" \\\"admin@weonboard.in\\\" \\\"YourStrongPassword\\\"\\n";
+    exit(0);
+} catch (Exception $e) {
+    error_log("[CLI Installer Error] " . $e->getMessage());
+    echo "ERROR: Installation failed: " . $e->getMessage() . "\\n";
+    exit(1);
+}
+`
+    },
+    {
       path: 'scripts/create_super_admin.php',
-      description: 'Secure CLI Provisioner for initial Super Admin (never commit plaintext passwords)',
+      description: 'Secure CLI Provisioner for Super Admin with confirmed overwrite protection and 12-char password policy',
       content: `<?php
 /**
  * Safe First-Super-Admin Provisioning CLI Tool
@@ -1745,6 +2103,7 @@ echo json_encode(['success' => false, 'authenticated' => false]);
  *
  * Usage via CLI:
  *   php scripts/create_super_admin.php "Full Name" "admin@weonboard.in" "StrongPassword123"
+ *   php scripts/create_super_admin.php "Full Name" "admin@weonboard.in" "NewStrongPassword123" --force
  */
 
 if (php_sapi_name() !== 'cli') {
@@ -1758,6 +2117,7 @@ require_once dirname(__DIR__) . '/config/database.php';
 $name = $argv[1] ?? null;
 $email = $argv[2] ?? null;
 $pass = $argv[3] ?? null;
+$force = in_array('--force', $argv, true) || in_array('-f', $argv, true);
 
 if (empty($name)) {
     echo "Enter Admin Full Name: ";
@@ -1770,12 +2130,12 @@ if (empty($email)) {
 }
 
 if (empty($pass)) {
-    echo "Enter Strong Password (min 8 chars): ";
+    echo "Enter Strong Password (min 12 chars): ";
     $pass = trim(fgets(STDIN));
 }
 
-if (strlen($pass) < 8) {
-    die("Error: Password must be at least 8 characters long.\\n");
+if (strlen($pass) < 12) {
+    die("Error: Super Administrator password must be at least 12 characters long for security.\\n");
 }
 
 if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
@@ -1785,7 +2145,6 @@ if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
 try {
     $db = Database::getConnection();
 
-    // Ensure role 1 exists
     $roleCheck = $db->query("SELECT id FROM roles WHERE id = 1")->fetch();
     if (!$roleCheck) {
         $db->exec("INSERT INTO roles (id, name, description) VALUES (1, 'Super Admin', 'Full access to all platform records, settings, and team users')");
@@ -1793,49 +2152,63 @@ try {
 
     $hash = password_hash($pass, PASSWORD_BCRYPT, ['cost' => 12]);
 
-    $stmt = $db->prepare("SELECT id FROM admin_users WHERE email = ? LIMIT 1");
+    $stmt = $db->prepare("SELECT id, name FROM admin_users WHERE email = ? LIMIT 1");
     $stmt->execute([$email]);
     $existing = $stmt->fetch();
 
     if ($existing) {
+        if (!$force) {
+            echo "NOTICE: An administrator account with email [{$email}] already exists (User ID: {$existing['id']}).\\n";
+            echo "To confirm password reset, type 'CONFIRM': ";
+            $confirm = trim(fgets(STDIN));
+            if ($confirm !== 'CONFIRM') {
+                die("Aborted: Password reset cancelled. Existing credentials were NOT modified.\\n");
+            }
+        }
+
         $update = $db->prepare("UPDATE admin_users SET name = ?, password_hash = ?, role_id = 1, is_active = 1, updated_at = NOW() WHERE id = ?");
         $update->execute([$name, $hash, $existing['id']]);
         echo "SUCCESS: Super Admin account [{$email}] successfully updated and secured.\\n";
+
+        $audit = $db->prepare("INSERT INTO audit_logs (acting_user, action, record_type, record_id, details, ip_address) VALUES ('CLI Provisioner', 'Super Admin Password Reset', 'User', ?, 'Password reset via confirmed CLI tool', '127.0.0.1')");
+        $audit->execute([$email]);
     } else {
         $insert = $db->prepare("INSERT INTO admin_users (name, email, password_hash, role_id, is_active) VALUES (?, ?, ?, 1, 1)");
         $insert->execute([$name, $email, $hash]);
-        echo "SUCCESS: Super Admin account [{$email}] successfully created with ID: " . $db->lastInsertId() . "\\n";
+        $newId = $db->lastInsertId();
+        echo "SUCCESS: Super Admin account [{$email}] successfully created with ID: {$newId}\\n";
+
+        $audit = $db->prepare("INSERT INTO audit_logs (acting_user, action, record_type, record_id, details, ip_address) VALUES ('CLI Provisioner', 'Super Admin Provisioned', 'User', ?, 'Account provisioned via secure CLI tool', '127.0.0.1')");
+        $audit->execute([$email]);
     }
 
-    // Record audit event
-    $audit = $db->prepare("INSERT INTO audit_logs (acting_user, action, record_type, record_id, details, ip_address) VALUES ('CLI Provisioner', 'Super Admin Provisioned', 'User', ?, 'Account provisioned via secure CLI tool', '127.0.0.1')");
-    $audit->execute([$email]);
-
 } catch (Exception $e) {
-    echo "Error provisioning Super Admin: " . $e->getMessage() . "\\n";
+    error_log("[CLI Admin Provisioner Error] " . $e->getMessage());
+    echo "Error provisioning Super Admin. Please check database connectivity and server logs.\\n";
     exit(1);
 }
 `
     },
     {
       path: 'scripts/hostinger_smoke_test.sh',
-      description: 'Hostinger SSH / Shell automated smoke test suite for live verification',
+      description: 'Hostinger SSH / Shell automated smoke test suite for live verification (Phase 2.3 Hardened)',
       content: `#!/usr/bin/env bash
 # ==============================================================================
-# WE ONBOARD — Hostinger SSH & Shell Smoke Test Suite
+# WE ONBOARD — Hostinger SSH & Shell Smoke Test Suite (Phase 2.3 Hardened)
 # ==============================================================================
 # Usage:
 #   chmod +x scripts/hostinger_smoke_test.sh
 #   ./scripts/hostinger_smoke_test.sh
+#   API_BASE=https://api.weonboard.in/v1 ./scripts/hostinger_smoke_test.sh
 # ==============================================================================
 
 set -u
 API_BASE="\${API_BASE:-https://api.weonboard.in/v1}"
 ORIGIN_APPROVED="https://weonboard.in"
-ORIGIN_UNAPPROVED="https://malicious-test-origin.org"
+ORIGIN_UNAPPROVED="https://unauthorized-attacker-domain.org"
 
 echo "=========================================================="
-echo "WE ONBOARD — HOSTINGER LIVE SMOKE TEST SUITE"
+echo "WE ONBOARD — HOSTINGER LIVE SMOKE TEST SUITE (PHASE 2.3)"
 echo "Target Base URL: \${API_BASE}"
 echo "Timestamp: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 echo "=========================================================="
@@ -1849,7 +2222,13 @@ run_check() {
     local actual_code="$3"
     local notes="$4"
 
-    if [[ "$actual_code" =~ $expected_code ]]; then
+    if [[ "$actual_code" == "000" ]]; then
+        echo -e "[FAIL] \${name} (Network Error / Unreachable: HTTP 000) — \${notes}"
+        ((FAILED++))
+        return
+    fi
+
+    if [[ "$actual_code" =~ ^($expected_code)$ ]]; then
         echo -e "[PASS] \${name} (HTTP \${actual_code}) — \${notes}"
         ((PASSED++))
     else
@@ -1858,49 +2237,92 @@ run_check() {
     fi
 }
 
-# 1. Health Probe
+# 1. Health Probe — HTTP 200 required; 503 is a deployment failure
 echo "1. Probing GET \${API_BASE}/health.php..."
-HEALTH_STATUS=$(curl -s -o /tmp/health_body.json -w "%{http_code}" "\${API_BASE}/health.php")
-run_check "Health Probe" "(200|503)" "$HEALTH_STATUS" "$(cat /tmp/health_body.json 2>/dev/null | cut -c 1-80)"
+HEALTH_BODY_FILE="/tmp/weonboard_health_body.json"
+HEALTH_STATUS=$(curl -s -m 10 -o "$HEALTH_BODY_FILE" -w "%{http_code}" "\${API_BASE}/health.php" || echo "000")
+
+if [[ "$HEALTH_STATUS" == "200" ]]; then
+    DB_STATUS=$(grep -o '"database":"[^"]*"' "$HEALTH_BODY_FILE" 2>/dev/null | cut -d'"' -f4)
+    if [[ "$DB_STATUS" == "available" ]]; then
+        run_check "Health & Database Readiness" "200" "$HEALTH_STATUS" "Database operational (status: healthy)"
+    else
+        echo -e "[FAIL] Health Probe returned HTTP 200 but database is '\${DB_STATUS}'"
+        ((FAILED++))
+    fi
+elif [[ "$HEALTH_STATUS" == "503" ]]; then
+    echo -e "[FAIL] DEPLOYMENT BLOCKER: Database is offline/degraded (HTTP 503)"
+    ((FAILED++))
+else
+    run_check "Health Probe" "200" "$HEALTH_STATUS" "Unexpected response"
+fi
 
 # 2. CORS Preflight - Approved Origin
 echo "2. Testing CORS preflight from \${ORIGIN_APPROVED}..."
-CORS_RES=$(curl -s -i -X OPTIONS "\${API_BASE}/health.php" \\
+CORS_RES=$(curl -s -m 10 -i -X OPTIONS "\${API_BASE}/health.php" \\
   -H "Origin: \${ORIGIN_APPROVED}" \\
   -H "Access-Control-Request-Method: GET" \\
-  -H "Access-Control-Request-Headers: Content-Type, X-Idempotency-Key")
-CORS_CODE=$(echo "$CORS_RES" | grep -i "^HTTP" | awk '{print $2}')
+  -H "Access-Control-Request-Headers: Content-Type, X-Idempotency-Key" 2>/dev/null || echo "")
+
+CORS_CODE=$(echo "$CORS_RES" | grep -i "^HTTP" | awk '{print $2}' | tail -n 1)
 CORS_ALLOW_ORIGIN=$(echo "$CORS_RES" | grep -i "^access-control-allow-origin:" | tr -d '\\r' | awk '{print $2}')
+if [[ -z "$CORS_CODE" ]]; then CORS_CODE="000"; fi
 
 if [[ "$CORS_ALLOW_ORIGIN" == "$ORIGIN_APPROVED" ]]; then
-    run_check "CORS Approved Origin" "(200|204)" "$CORS_CODE" "Access-Control-Allow-Origin: \${CORS_ALLOW_ORIGIN}"
+    run_check "CORS Approved Origin Preflight" "200|204" "$CORS_CODE" "Access-Control-Allow-Origin: \${CORS_ALLOW_ORIGIN}"
 else
-    run_check "CORS Approved Origin" "204" "$CORS_CODE" "Origin mismatch or missing header"
+    run_check "CORS Approved Origin Preflight" "204" "$CORS_CODE" "Origin header missing or rejected"
 fi
 
-# 3. Unauthenticated Rejection
-echo "3. Probing protected endpoint without session..."
-AUTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" "\${API_BASE}/auth/me.php")
-run_check "Unauthenticated Access Rejection" "401" "$AUTH_CODE" "Expected HTTP 401 Unauthorized"
+# 3. CORS Preflight - Unapproved Origin Rejection
+echo "3. Testing CORS preflight from unapproved origin..."
+BAD_CORS_RES=$(curl -s -m 10 -i -X OPTIONS "\${API_BASE}/health.php" \\
+  -H "Origin: \${ORIGIN_UNAPPROVED}" \\
+  -H "Access-Control-Request-Method: GET" 2>/dev/null || echo "")
 
-# 4. Bad Credentials Rejection
-echo "4. Testing invalid credentials at \${API_BASE}/auth/login.php..."
-LOGIN_CODE=$(curl -s -o /tmp/login_res.json -w "%{http_code}" -X POST "\${API_BASE}/auth/login.php" \\
+BAD_CORS_CODE=$(echo "$BAD_CORS_RES" | grep -i "^HTTP" | awk '{print $2}' | tail -n 1)
+BAD_ALLOW_ORIGIN=$(echo "$BAD_CORS_RES" | grep -i "^access-control-allow-origin:" | tr -d '\\r' | awk '{print $2}')
+
+if [[ -z "$BAD_CORS_CODE" ]]; then
+    echo -e "[FAIL] CORS Unapproved Origin: Network connection failed (unverified)"
+    ((FAILED++))
+elif [[ -z "$BAD_ALLOW_ORIGIN" || "$BAD_ALLOW_ORIGIN" == "null" ]]; then
+    run_check "CORS Unapproved Origin Rejection" "403|204" "$BAD_CORS_CODE" "Access-Control-Allow-Origin correctly omitted"
+else
+    echo -e "[FAIL] SECURITY ISSUE: Unapproved origin permitted: \${BAD_ALLOW_ORIGIN}"
+    ((FAILED++))
+fi
+
+# 4. Unauthenticated Rejection
+echo "4. Probing protected endpoint without session..."
+AUTH_CODE=$(curl -s -m 10 -o /dev/null -w "%{http_code}" "\${API_BASE}/auth/me.php" || echo "000")
+run_check "Unauthenticated Access Rejection (/auth/me.php)" "401" "$AUTH_CODE" "Expected HTTP 401 Unauthorized"
+
+# 5. Bad Credentials Rejection
+echo "5. Testing invalid credentials at \${API_BASE}/auth/login.php..."
+LOGIN_CODE=$(curl -s -m 10 -o /tmp/weonboard_login_res.json -w "%{http_code}" -X POST "\${API_BASE}/auth/login.php" \\
   -H "Content-Type: application/json" \\
   -H "Origin: \${ORIGIN_APPROVED}" \\
-  -d '{"email":"synthetic-bad-user@weonboard.in","password":"WrongPassword123!"}')
+  -d '{"email":"synthetic-bad-user@weonboard.in","password":"WrongPassword123!"}' || echo "000")
 run_check "Invalid Credentials Rejection" "401" "$LOGIN_CODE" "Generic error returned"
 
-# 5. Direct Configuration File Download Block
-echo "5. Testing Apache protection on config.php..."
+# 6. Direct Configuration File Download Block
+echo "6. Testing Apache protection on config.php..."
 ROOT_URL="\${API_BASE%/v1}"
-CONFIG_CODE=$(curl -s -o /dev/null -w "%{http_code}" "\${ROOT_URL}/config/config.php")
-run_check "Protected File Blocking (/config/config.php)" "(403|404)" "$CONFIG_CODE" "PHP source not leaked"
+CONFIG_CODE=$(curl -s -m 10 -o /dev/null -w "%{http_code}" "\${ROOT_URL}/config/config.php" || echo "000")
+run_check "Protected File Blocking (/config/config.php)" "403|404" "$CONFIG_CODE" "PHP source not leaked"
 
 echo ""
 echo "=========================================================="
 echo "TEST RESULTS: \${PASSED} Passed | \${FAILED} Failed"
 echo "=========================================================="
+if [ "$FAILED" -gt 0 ]; then
+    echo "STATUS: NOT READY FOR PRODUCTION"
+    exit 1
+else
+    echo "STATUS: ALL SMOKE TESTS PASSED"
+    exit 0
+fi
 `
     },
     {

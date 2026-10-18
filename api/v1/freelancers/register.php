@@ -71,18 +71,43 @@ if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
     exit;
 }
 
+$currentEndpoint = 'freelancer_register';
+$currentPayloadHash = hash('sha256', !empty($rawInput) ? $rawInput : json_encode($data));
+
 $db = null;
 try {
     $db = Database::getConnection();
 
-    // 1. Idempotency Check
+    // 1. Strict Idempotency Check & Conflict Resolution
     if (!empty($idempotencyKey)) {
-        $idemStmt = $db->prepare("SELECT response_json FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1");
-        $idemStmt->execute([$idempotencyKey]);
-        $cached = $idemStmt->fetchColumn();
-        if ($cached) {
-            echo $cached;
+        if (!preg_match('/^[A-Za-z0-9_\-]{8,64}$/', $idempotencyKey)) {
+            http_response_code(400);
+            echo json_encode([
+                'success' => false,
+                'error' => 'Invalid idempotency key format. Must be 8-64 alphanumeric characters, underscores, or hyphens.'
+            ]);
             exit;
+        }
+
+        $idemStmt = $db->prepare("SELECT endpoint, request_payload_hash, response_json FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1");
+        $idemStmt->execute([$idempotencyKey]);
+        $cached = $idemStmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($cached) {
+            if ($cached['endpoint'] === $currentEndpoint && hash_equals($cached['request_payload_hash'], $currentPayloadHash)) {
+                // Legitimate idempotent replay
+                header('X-Idempotency-Hit: true');
+                echo $cached['response_json'];
+                exit;
+            } else {
+                // Key reuse conflict
+                http_response_code(409);
+                echo json_encode([
+                    'success' => false,
+                    'error' => 'Idempotency conflict: The provided idempotency key has already been used with a different endpoint or request payload.'
+                ]);
+                exit;
+            }
         }
     }
 
@@ -125,8 +150,8 @@ try {
     ]);
 
     if (!empty($idempotencyKey)) {
-        $db->prepare("INSERT IGNORE INTO idempotency_keys (idempotency_key, endpoint, request_payload_hash, response_json) VALUES (?, ?, ?, ?)")
-           ->execute([$idempotencyKey, 'freelancer_register', hash('sha256', $rawInput), $responseJson]);
+        $db->prepare("INSERT INTO idempotency_keys (idempotency_key, endpoint, request_payload_hash, response_json) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE id=id")
+           ->execute([$idempotencyKey, $currentEndpoint, $currentPayloadHash, $responseJson]);
     }
 
     $db->commit();
@@ -140,7 +165,7 @@ try {
         echo json_encode(['success' => false, 'error' => 'An application with this mobile number or email address has already been submitted.']);
         exit;
     }
-    error_log("Freelancer registration error: " . $e->getMessage());
+    error_log("Freelancer registration database error: " . $e->getMessage());
     http_response_code(500);
     echo json_encode(['success' => false, 'error' => 'Unable to complete registration at this time. Please try again or contact support at mail@weonboard.in.']);
 } catch (Exception $e) {

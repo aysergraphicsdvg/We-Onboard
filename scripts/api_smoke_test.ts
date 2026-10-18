@@ -2,7 +2,13 @@
  * WE ONBOARD — API Smoke Test & Verification Suite
  * 
  * Verifies live API endpoints, CORS preflights, unauthenticated access rejection,
- * rate limiting, idempotency caching, and duplicate protection.
+ * rate limiting, idempotency caching, conflict rejection, and protected file blocks.
+ * 
+ * Safety & Truthfulness Rules:
+ * - A healthy API test requires HTTP 200 and operational database.
+ * - HTTP 503 (database unavailable) is reported as a deployment failure, never a pass.
+ * - Network failures are reported as failures/unverified, never security passes.
+ * - Exits with non-zero exit code if any required readiness check fails.
  * 
  * Usage:
  *   npx tsx scripts/api_smoke_test.ts
@@ -11,16 +17,17 @@
 
 const BASE_URL = (process.env.API_URL || 'https://api.weonboard.in/v1').replace(/\/+$/, '');
 const ORIGIN_APPROVED = 'https://weonboard.in';
-const ORIGIN_UNAPPROVED = 'https://malicious-attacker-domain.org';
+const ORIGIN_UNAPPROVED = 'https://unauthorized-attacker-domain.org';
 
 interface TestResult {
   name: string;
-  category: 'LOCAL_SPEC' | 'REMOTE_HTTP' | 'HOSTINGER_LIVE';
+  category: 'ENDPOINT_AVAILABILITY' | 'DATABASE_READINESS' | 'SECURITY_CORS' | 'AUTH_ACCESS' | 'IDEMPOTENCY';
   passed: boolean;
   status?: number;
   expectedStatus?: number | number[];
   details: string;
   error?: string;
+  isBlocker?: boolean;
 }
 
 const results: TestResult[] = [];
@@ -28,7 +35,8 @@ const results: TestResult[] = [];
 function record(res: TestResult) {
   results.push(res);
   const mark = res.passed ? '✓ PASS' : '✗ FAIL';
-  console.log(`${mark} [${res.category}] ${res.name} (HTTP ${res.status || 'N/A'}) - ${res.details}`);
+  const blockerNote = (!res.passed && res.isBlocker) ? ' [DEPLOYMENT BLOCKER]' : '';
+  console.log(`${mark} [${res.category}] ${res.name} (HTTP ${res.status || 'N/A'})${blockerNote} — ${res.details}`);
   if (res.error) {
     console.error(`   Error details: ${res.error}`);
   }
@@ -36,12 +44,12 @@ function record(res: TestResult) {
 
 async function runSuite() {
   console.log(`\n======================================================`);
-  console.log(`WE ONBOARD API SMOKE TEST RUNNER`);
+  console.log(`WE ONBOARD API SMOKE TEST RUNNER (PHASE 2.3)`);
   console.log(`Target Base URL: ${BASE_URL}`);
   console.log(`Execution Time: ${new Date().toISOString()}`);
   console.log(`======================================================\n`);
 
-  // 1. Health Probe Test
+  // 1. Health Probe & Database Readiness (Separated)
   try {
     const healthUrl = `${BASE_URL}/health.php`;
     const res = await fetch(healthUrl, {
@@ -55,28 +63,52 @@ async function runSuite() {
       json = JSON.parse(bodyText);
     } catch {}
 
-    const isHealthy = status === 200 && json && json.status === 'healthy';
-    const isDegraded = status === 503 && json && json.status === 'degraded';
+    const isHttpReachable = status === 200 || status === 503;
+    const isDbOperational = status === 200 && json && json.status === 'healthy' && json.database === 'available';
 
+    // 1a. Endpoint Reachability
     record({
-      name: 'GET /health.php Endpoint Probe',
-      category: 'REMOTE_HTTP',
-      passed: isHealthy || isDegraded,
+      name: 'GET /health.php Endpoint Reachability',
+      category: 'ENDPOINT_AVAILABILITY',
+      passed: isHttpReachable,
       status,
-      expectedStatus: [200, 503],
-      details: isHealthy
-        ? `Service healthy, database reporting '${json?.database}'`
-        : isDegraded
-        ? `Service up but database degraded ('${json?.database}'). Deploy DB schema/credentials.`
-        : `Unexpected response: ${bodyText.slice(0, 120)}`
+      expectedStatus: 200,
+      details: isHttpReachable 
+        ? `HTTP server responding with status ${status}`
+        : `Endpoint unreachable or returned unexpected status ${status}: ${bodyText.slice(0, 80)}`,
+      isBlocker: true
+    });
+
+    // 1b. Database Readiness Check (Truthful: 503 is a FAILURE for deployment)
+    record({
+      name: 'MySQL Database Connectivity & Readiness',
+      category: 'DATABASE_READINESS',
+      passed: isDbOperational,
+      status,
+      expectedStatus: 200,
+      details: isDbOperational
+        ? `Database fully operational (status: '${json.status}', db: '${json.database}')`
+        : status === 503
+        ? `DEPLOYMENT BLOCKER: Database is offline/unreachable (HTTP 503). Ensure MySQL credentials are set in server environment.`
+        : `Database status check failed: received HTTP ${status} with body: ${bodyText.slice(0, 100)}`,
+      isBlocker: true
     });
   } catch (err: any) {
     record({
-      name: 'GET /health.php Endpoint Probe',
-      category: 'REMOTE_HTTP',
+      name: 'GET /health.php Endpoint Reachability',
+      category: 'ENDPOINT_AVAILABILITY',
       passed: false,
-      details: 'Connection failed',
-      error: err.message
+      details: 'Network connection failed — host unreachable or DNS/SSL error',
+      error: err.message,
+      isBlocker: true
+    });
+    record({
+      name: 'MySQL Database Connectivity & Readiness',
+      category: 'DATABASE_READINESS',
+      passed: false,
+      details: 'Cannot verify database because host is unreachable',
+      error: err.message,
+      isBlocker: true
     });
   }
 
@@ -96,21 +128,23 @@ async function runSuite() {
     const passed = (res.status === 204 || res.status === 200) && allowOrigin === ORIGIN_APPROVED;
     record({
       name: 'CORS Preflight (Approved Origin: weonboard.in)',
-      category: 'REMOTE_HTTP',
+      category: 'SECURITY_CORS',
       passed,
       status: res.status,
       expectedStatus: 204,
       details: passed
-        ? `Correctly returned Access-Control-Allow-Origin: ${allowOrigin}, Credentials: ${allowCreds}`
-        : `Headers missing or disallowed. Returned Origin: ${allowOrigin}`
+        ? `Allowed origin header returned correctly (${allowOrigin}), credentials: ${allowCreds}`
+        : `CORS preflight failed: returned origin '${allowOrigin}', status: ${res.status}`,
+      isBlocker: true
     });
   } catch (err: any) {
     record({
-      name: 'CORS Preflight (Approved Origin)',
-      category: 'REMOTE_HTTP',
+      name: 'CORS Preflight (Approved Origin: weonboard.in)',
+      category: 'SECURITY_CORS',
       passed: false,
-      details: 'OPTIONS request failed',
-      error: err.message
+      details: 'Network connection error during CORS preflight probe',
+      error: err.message,
+      isBlocker: true
     });
   }
 
@@ -124,27 +158,35 @@ async function runSuite() {
       }
     });
     const allowOrigin = res.headers.get('access-control-allow-origin');
-    const passed = !allowOrigin || allowOrigin === 'null';
+    // Truthful check: passes ONLY if server responded AND rejected without allow-origin
+    const passed = (!allowOrigin || allowOrigin === 'null') && (res.status === 403 || res.status === 204);
 
     record({
       name: 'CORS Preflight Rejection (Unapproved Origin)',
-      category: 'REMOTE_HTTP',
+      category: 'SECURITY_CORS',
       passed,
       status: res.status,
+      expectedStatus: 403,
       details: passed
-        ? `Correctly denied or omitted Access-Control-Allow-Origin for unauthorized domain`
-        : `SECURITY WARNING: Unauthorized origin received Access-Control-Allow-Origin: ${allowOrigin}`
+        ? `Unauthorized origin correctly rejected (Access-Control-Allow-Origin omitted, HTTP ${res.status})`
+        : (allowOrigin && allowOrigin !== 'null')
+        ? `SECURITY CRITICAL: Unauthorized origin permitted with Access-Control-Allow-Origin: ${allowOrigin}`
+        : `Preflight rejection check failed: expected HTTP 403 or 204 without allow-origin, received HTTP ${res.status}`,
+      isBlocker: true
     });
   } catch (err: any) {
+    // Truthful check: Network failure is NEVER marked as passed!
     record({
       name: 'CORS Preflight Rejection (Unapproved Origin)',
-      category: 'REMOTE_HTTP',
-      passed: true,
-      details: 'Connection cleanly closed or refused'
+      category: 'SECURITY_CORS',
+      passed: false,
+      details: 'Network connection failure — unable to verify origin rejection on server',
+      error: err.message,
+      isBlocker: true
     });
   }
 
-  // 4. Protected Endpoint Without Session Rejection
+  // 4. Protected Session Endpoint Rejection
   try {
     const res = await fetch(`${BASE_URL}/auth/me.php`, {
       method: 'GET',
@@ -157,21 +199,23 @@ async function runSuite() {
     const passed = status === 401 && json?.authenticated === false;
     record({
       name: 'Unauthenticated Access Rejection (/auth/me.php)',
-      category: 'REMOTE_HTTP',
+      category: 'AUTH_ACCESS',
       passed,
       status,
       expectedStatus: 401,
       details: passed
-        ? `Correctly returned 401 Unauthorized with authenticated: false`
-        : `Expected 401 Unauthorized, received ${status}`
+        ? `Correctly returned HTTP 401 Unauthorized with authenticated: false`
+        : `Expected HTTP 401 Unauthorized, received ${status}`,
+      isBlocker: true
     });
   } catch (err: any) {
     record({
       name: 'Unauthenticated Access Rejection (/auth/me.php)',
-      category: 'REMOTE_HTTP',
+      category: 'AUTH_ACCESS',
       passed: false,
-      details: 'Failed to probe /auth/me.php',
-      error: err.message
+      details: 'Failed to contact /auth/me.php',
+      error: err.message,
+      isBlocker: true
     });
   }
 
@@ -184,7 +228,7 @@ async function runSuite() {
         'Origin': ORIGIN_APPROVED
       },
       body: JSON.stringify({
-        email: 'synthetic-nonexistent@weonboard.in',
+        email: 'synthetic-nonexistent-audit@weonboard.in',
         password: 'InvalidPassword123!'
       })
     });
@@ -195,35 +239,37 @@ async function runSuite() {
     const passed = status === 401 && json?.success === false && typeof json?.error === 'string';
     record({
       name: 'Bad Credentials Authentication Rejection',
-      category: 'REMOTE_HTTP',
+      category: 'AUTH_ACCESS',
       passed,
       status,
       expectedStatus: 401,
       details: passed
         ? `Correctly rejected with generic message: "${json.error}"`
-        : `Expected 401, received ${status}`
+        : `Expected HTTP 401, received ${status}`,
+      isBlocker: true
     });
   } catch (err: any) {
     record({
       name: 'Bad Credentials Authentication Rejection',
-      category: 'REMOTE_HTTP',
+      category: 'AUTH_ACCESS',
       passed: false,
       details: 'Failed to contact /auth/login.php',
-      error: err.message
+      error: err.message,
+      isBlocker: true
     });
   }
 
-  // 6. Synthetic Public Enquiry & Idempotency Check
+  // 6. Idempotency Key Validation & Conflict Rejection
   const idempotencyKey = `smoke-test-${Date.now()}`;
   const syntheticPhone = `+9199999${String(Math.floor(1000 + Math.random() * 9000))}`;
-  const syntheticEnquiryPayload = {
-    full_name: '[SYNTHETIC-TEST] Automated Smoke Runner',
-    email: 'synthetic.test.automation@weonboard.in',
+  const payloadA = {
+    full_name: '[SYNTHETIC-TEST] Idempotency Verification',
+    email: 'synthetic.smoke.test@weonboard.in',
     phone: syntheticPhone,
     company_name: '[SYNTHETIC-TEST] Verification Corp',
     city: 'Bengaluru',
     service_required: 'General enquiry',
-    message: '[SYNTHETIC-SMOKE-TEST] Automated runbook verification record. Safe to purge.',
+    message: '[SYNTHETIC-TEST] Automated runbook verification probe.',
     enquiry_type: 'Business',
     idempotency_key: idempotencyKey
   };
@@ -236,14 +282,14 @@ async function runSuite() {
         'Origin': ORIGIN_APPROVED,
         'X-Idempotency-Key': idempotencyKey
       },
-      body: JSON.stringify(syntheticEnquiryPayload)
+      body: JSON.stringify(payloadA)
     });
     const status1 = res1.status;
     let json1: any = null;
     try { json1 = await res1.json(); } catch {}
 
     if (status1 === 200 && json1?.success) {
-      // Re-submit with same idempotency key to test replay cache
+      // 6a: Replay identical request
       const res2 = await fetch(`${BASE_URL}/enquiry.php`, {
         method: 'POST',
         headers: {
@@ -251,39 +297,77 @@ async function runSuite() {
           'Origin': ORIGIN_APPROVED,
           'X-Idempotency-Key': idempotencyKey
         },
-        body: JSON.stringify(syntheticEnquiryPayload)
+        body: JSON.stringify(payloadA)
       });
       let json2: any = null;
       try { json2 = await res2.json(); } catch {}
+      const isReplayEqual = json1.reference_id === json2?.reference_id;
 
-      const isIdempotent = json1.reference_id === json2?.reference_id;
       record({
-        name: 'Synthetic Enquiry Submission & Idempotent Replay',
-        category: 'HOSTINGER_LIVE',
-        passed: isIdempotent,
-        status: status1,
+        name: 'Idempotency Replay (Identical Payload)',
+        category: 'IDEMPOTENCY',
+        passed: isReplayEqual,
+        status: res2.status,
         expectedStatus: 200,
-        details: isIdempotent
-          ? `Created ref ${json1.reference_id}; replayed identically on second request without duplicate row.`
-          : `Idempotency mismatch: ref1=${json1.reference_id}, ref2=${json2?.reference_id}`
+        details: isReplayEqual
+          ? `Returned cached reference ${json1.reference_id} without creating duplicate record`
+          : `Mismatch in cached response: ref1=${json1.reference_id}, ref2=${json2?.reference_id}`,
+        isBlocker: false
+      });
+
+      // 6b: Submit different payload with SAME key -> Must reject with HTTP 409 Conflict
+      const payloadB = { ...payloadA, full_name: '[CONFLICT-TEST] Different Payload Name' };
+      const res3 = await fetch(`${BASE_URL}/enquiry.php`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': ORIGIN_APPROVED,
+          'X-Idempotency-Key': idempotencyKey
+        },
+        body: JSON.stringify(payloadB)
+      });
+      let json3: any = null;
+      try { json3 = await res3.json(); } catch {}
+      const isConflictCaught = res3.status === 409 && json3?.success === false;
+
+      record({
+        name: 'Idempotency Conflict Rejection (Key Reuse With Different Payload)',
+        category: 'IDEMPOTENCY',
+        passed: isConflictCaught,
+        status: res3.status,
+        expectedStatus: 409,
+        details: isConflictCaught
+          ? `Correctly returned HTTP 409 Conflict: "${json3?.error}"`
+          : `Failed: expected HTTP 409 Conflict, received HTTP ${res3.status}`,
+        isBlocker: false
+      });
+    } else if (status1 === 503) {
+      record({
+        name: 'Idempotency Replay & Conflict Rejection',
+        category: 'IDEMPOTENCY',
+        passed: false,
+        status: 503,
+        details: 'Cannot verify idempotency because live database is offline (HTTP 503)',
+        isBlocker: true
       });
     } else {
       record({
-        name: 'Synthetic Enquiry Submission & Idempotent Replay',
-        category: 'HOSTINGER_LIVE',
+        name: 'Idempotency Replay & Conflict Rejection',
+        category: 'IDEMPOTENCY',
         passed: false,
         status: status1,
-        expectedStatus: 200,
-        details: `Endpoint returned error: ${JSON.stringify(json1 || 'non-json')}`
+        details: `Initial synthetic submission failed with status ${status1}: ${JSON.stringify(json1 || 'non-json')}`,
+        isBlocker: true
       });
     }
   } catch (err: any) {
     record({
-      name: 'Synthetic Enquiry Submission & Idempotent Replay',
-      category: 'HOSTINGER_LIVE',
+      name: 'Idempotency Replay & Conflict Rejection',
+      category: 'IDEMPOTENCY',
       passed: false,
-      details: 'Enquiry test aborted',
-      error: err.message
+      details: 'Connection error during idempotency probe',
+      error: err.message,
+      isBlocker: true
     });
   }
 
@@ -294,46 +378,61 @@ async function runSuite() {
     const status = res.status;
     const body = await res.text();
 
-    const passed = (status === 403 || status === 404) && !body.includes('DB_PASS');
+    const passed = (status === 403 || status === 404) && !body.includes('DB_HOST') && !body.includes('<?php');
     record({
-      name: 'Directory & Config Download Protection (/config/config.php)',
-      category: 'HOSTINGER_LIVE',
+      name: 'Direct Config File Download Protection (/config/config.php)',
+      category: 'AUTH_ACCESS',
       passed,
       status,
       expectedStatus: [403, 404],
       details: passed
-        ? `Access blocked with HTTP ${status}. PHP source was not leaked.`
-        : `SECURITY CRITICAL: Raw config file accessible! Status: ${status}`
+        ? `Access blocked with HTTP ${status}. Source code is protected.`
+        : `SECURITY CRITICAL: Raw config file accessible! Status: ${status}`,
+      isBlocker: true
     });
   } catch (err: any) {
+    // Truthful check: network failure is not recorded as passed
     record({
-      name: 'Directory & Config Download Protection (/config/config.php)',
-      category: 'HOSTINGER_LIVE',
-      passed: true,
-      details: 'Direct request failed or connection refused'
+      name: 'Direct Config File Download Protection (/config/config.php)',
+      category: 'AUTH_ACCESS',
+      passed: false,
+      details: 'Network error contacting config URL — unverified',
+      error: err.message,
+      isBlocker: true
     });
   }
 
-  // Print Summary Table
+  // Summary & Process Exit
   console.log(`\n======================================================`);
-  console.log(`SUMMARY REPORT`);
+  console.log(`SMOKE TEST SUMMARY REPORT`);
   console.log(`======================================================`);
   const total = results.length;
-  const passed = results.filter(r => r.passed).length;
-  const failed = total - passed;
+  const passedCount = results.filter(r => r.passed).length;
+  const failedCount = total - passedCount;
+  const blockers = results.filter(r => !r.passed && r.isBlocker).length;
 
-  console.log(`Total Probes: ${total} | Passed: ${passed} | Failed: ${failed}`);
+  console.log(`Total Checks: ${total} | Passed: ${passedCount} | Failed: ${failedCount} | Blockers: ${blockers}`);
 
-  if (failed > 0) {
-    console.log(`\nNote: If endpoints returned 404 or connection errors, verify that the Hostinger deployment package has been extracted to public_html/api/ and public_html/ as outlined in docs/PHASE2_2_HOSTINGER_DEPLOYMENT_RUNBOOK.md.`);
+  if (failedCount > 0) {
+    console.log(`\nSTATUS: NOT READY FOR PRODUCTION`);
+    console.log(`Review the failures above. If Hostinger backend is not yet provisioned, deploy the package to public_html/ and execute database migrations.`);
+    return { total, passed: passedCount, failed: failedCount, blockers, success: false };
+  } else {
+    console.log(`\nSTATUS: ALL SMOKE TESTS PASSED`);
+    return { total, passed: passedCount, failed: failedCount, blockers: 0, success: true };
   }
-
-  return { total, passed, failed };
 }
 
 // Self execute if run directly
 if (import.meta.url === `file://${process.argv[1]}`) {
-  runSuite().catch(console.error);
+  runSuite().then(res => {
+    if (!res.success) {
+      process.exit(1);
+    }
+  }).catch(err => {
+    console.error('Fatal test runner error:', err);
+    process.exit(1);
+  });
 }
 
 export { runSuite };

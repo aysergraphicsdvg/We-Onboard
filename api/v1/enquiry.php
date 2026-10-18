@@ -65,18 +65,43 @@ if (!in_array($enquiryType, $allowedEnquiryTypes, true)) {
     $enquiryType = 'Business';
 }
 
+$currentEndpoint = 'enquiry';
+$currentPayloadHash = hash('sha256', !empty($rawInput) ? $rawInput : json_encode($data));
+
 $db = null;
 try {
     $db = Database::getConnection();
 
-    // 1. Idempotency Check (if client provided an idempotency key)
+    // 1. Strict Idempotency Check & Conflict Resolution
     if (!empty($idempotencyKey)) {
-        $idemStmt = $db->prepare("SELECT response_json FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1");
-        $idemStmt->execute([$idempotencyKey]);
-        $cached = $idemStmt->fetchColumn();
-        if ($cached) {
-            echo $cached;
+        if (!preg_match('/^[A-Za-z0-9_\-]{8,64}$/', $idempotencyKey)) {
+            http_response_code(400);
+            echo json_encode([
+                'success' => false,
+                'error' => 'Invalid idempotency key format. Must be 8-64 alphanumeric characters, underscores, or hyphens.'
+            ]);
             exit;
+        }
+
+        $idemStmt = $db->prepare("SELECT endpoint, request_payload_hash, response_json FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1");
+        $idemStmt->execute([$idempotencyKey]);
+        $cached = $idemStmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($cached) {
+            if ($cached['endpoint'] === $currentEndpoint && hash_equals($cached['request_payload_hash'], $currentPayloadHash)) {
+                // Legitimate idempotent replay: return cached response
+                header('X-Idempotency-Hit: true');
+                echo $cached['response_json'];
+                exit;
+            } else {
+                // Key reuse conflict: same key with different payload or endpoint
+                http_response_code(409);
+                echo json_encode([
+                    'success' => false,
+                    'error' => 'Idempotency conflict: The provided idempotency key has already been used with a different endpoint or request payload.'
+                ]);
+                exit;
+            }
         }
     }
 
@@ -113,8 +138,8 @@ try {
     ]);
 
     if (!empty($idempotencyKey)) {
-        $db->prepare("INSERT IGNORE INTO idempotency_keys (idempotency_key, endpoint, request_payload_hash, response_json) VALUES (?, ?, ?, ?)")
-           ->execute([$idempotencyKey, 'enquiry', hash('sha256', $rawInput), $responseJson]);
+        $db->prepare("INSERT INTO idempotency_keys (idempotency_key, endpoint, request_payload_hash, response_json) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE id=id")
+           ->execute([$idempotencyKey, $currentEndpoint, $currentPayloadHash, $responseJson]);
     }
 
     $db->commit();

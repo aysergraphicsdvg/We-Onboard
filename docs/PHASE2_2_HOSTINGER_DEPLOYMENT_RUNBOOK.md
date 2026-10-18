@@ -167,40 +167,56 @@ public_html/
 │   ├── logout.php
 │   ├── dashboard.php              <-- Live metrics overview
 │   └── enquiries.php              <-- Enquiry CRM & CSV export
-├── install.php                    <-- One-time installer (locks after completion)
+├── install.php                    <-- Guarded installer (disabled in production by default)
 ├── scripts/
-│   └── create_super_admin.php     <-- CLI-only provisioner
+│   ├── install.php                <-- Primary CLI database & role initializer
+│   ├── create_super_admin.php     <-- CLI-only Super Admin provisioner
+│   └── hostinger_smoke_test.sh    <-- Automated SSH smoke test runner
 └── index.php / assets/            <-- Frontend landing page assets
 ```
 
 ### Step 5.3: Set Database Credentials
-Edit `config/config.php` in File Manager with the actual Hostinger database credentials:
-```php
-define('DB_HOST', 'localhost');
-define('DB_NAME', 'u123456789_weonboard');
-define('DB_USER', 'u123456789_admin');
-define('DB_PASS', 'YOUR_ACTUAL_STRONG_DB_PASSWORD');
+Configure database credentials on the Hostinger server using either of two secure methods (never commit plaintext credentials):
+
+**Option A (Recommended): Server Environment Variables (.htaccess or Hostinger PHP environment)**
+```apache
+SetEnv DB_HOST localhost
+SetEnv DB_NAME u123456789_weonboard
+SetEnv DB_USER u123456789_admin
+SetEnv DB_PASS YOUR_ACTUAL_STRONG_DB_PASSWORD
 ```
-*Note: Never commit actual passwords to git or public repositories.*
 
-### Step 5.4: Provision Super Administrator Account & Lock Web Installer
-You can provision the initial Super Admin account using either of two methods:
+**Option B: Uncommitted Server Configuration File (`config/db_credentials.php`)**
+Create `config/db_credentials.php` on the server:
+```php
+<?php
+return [
+    'DB_HOST' => 'localhost',
+    'DB_NAME' => 'u123456789_weonboard',
+    'DB_USER' => 'u123456789_admin',
+    'DB_PASS' => 'YOUR_ACTUAL_STRONG_DB_PASSWORD',
+];
+```
+*Security Note:* `config/config.php` and `config/database.php` fail closed: if database credentials are not configured, database connectivity is refused and a safe HTTP 503 is returned with private logging to server error logs.
 
-- **Method A: Primary & Secure (SSH CLI Provisioner — Recommended):**
+### Step 5.4: Provision Database and Super Administrator Account
+
+- **Method A: Primary & Secure (SSH CLI Execution — Recommended):**
   Connect via Hostinger SSH terminal and execute:
   ```bash
-  php scripts/create_super_admin.php "Muhammad Ali Shoaib" "admin@weonboard.in" "YOUR_STRONG_PASSWORD"
-  ```
-  *Security Note:* `scripts/create_super_admin.php` is strictly restricted to CLI execution (`php_sapi_name() === 'cli'`). Direct web requests receive HTTP 403.
-  **Immediately lock or remove the web installer** to ensure no public user can trigger `install.php`:
-  ```bash
-  touch config/install.lock
-  # or remove the file: rm install.php
-  ```
+  # Step 1: Initialize database schema, roles, and settings
+  php scripts/install.php
 
-- **Method B: Alternate (One-Time Web Installer):**
-  If SSH is not available, navigate to `https://weonboard.in/install.php` in your browser. Enter your database credentials and set an initial administrator password (minimum 8 characters).
-  *Security Note:* `install.php` does NOT contain any hardcoded default password. Upon successful completion, it automatically creates `config/install.lock`. Any subsequent request to `install.php` will be permanently blocked (`Installation Completed: system is locked`).
+  # Step 2: Provision Super Administrator (minimum 12 characters password)
+  php scripts/create_super_admin.php "Muhammad Ali Shoaib" "admin@weonboard.in" "YOUR_STRONG_PASSWORD_12_CHARS"
+  ```
+  *Security Note:* `scripts/install.php` and `scripts/create_super_admin.php` are strictly restricted to CLI execution (`php_sapi_name() === 'cli'`). They cannot be executed via the web.
+
+- **Method B: Non-Production Guarded Web Installer:**
+  For development/staging environments without SSH access, web installation can be temporarily enabled by setting `ALLOW_WEB_INSTALL=true` and configuring an `INSTALL_KEY`:
+  1. Access `https://weonboard.in/install.php?key=YOUR_ONE_TIME_INSTALL_KEY`
+  2. The installer enforces CSRF validation, validates input, prevents overwriting existing administrator passwords, seeds the database, and permanently writes `config/install.lock`.
+  3. Any subsequent web access is permanently locked out (HTTP 403).
 
 ---
 

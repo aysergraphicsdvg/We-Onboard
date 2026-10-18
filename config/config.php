@@ -20,12 +20,30 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-// Database Credentials (Set via Hostinger hPanel -> MySQL Databases)
-define('DB_HOST', getenv('DB_HOST') ?: 'localhost');
-define('DB_NAME', getenv('DB_NAME') ?: 'u123456789_weonboard');
-define('DB_USER', getenv('DB_USER') ?: 'u123456789_admin');
-define('DB_PASS', getenv('DB_PASS') ?: 'YourStrongDbPasswordHere');
+// Database Credentials (Must be explicitly configured via server environment or config/db_credentials.php)
+$dbHost = getenv('DB_HOST') ?: ($_ENV['DB_HOST'] ?? ($_SERVER['DB_HOST'] ?? 'localhost'));
+$dbName = getenv('DB_NAME') ?: ($_ENV['DB_NAME'] ?? ($_SERVER['DB_NAME'] ?? ''));
+$dbUser = getenv('DB_USER') ?: ($_ENV['DB_USER'] ?? ($_SERVER['DB_USER'] ?? ''));
+$dbPass = getenv('DB_PASS') ?: ($_ENV['DB_PASS'] ?? ($_SERVER['DB_PASS'] ?? ''));
+
+// Optional: support an uncommitted, protected server credentials file if the PHP SAPI does not expose environment variables
+$localDbConfig = __DIR__ . '/db_credentials.php';
+if (file_exists($localDbConfig)) {
+    $creds = include $localDbConfig;
+    if (is_array($creds)) {
+        $dbHost = $creds['DB_HOST'] ?? $dbHost;
+        $dbName = $creds['DB_NAME'] ?? $dbName;
+        $dbUser = $creds['DB_USER'] ?? $dbUser;
+        $dbPass = $creds['DB_PASS'] ?? $dbPass;
+    }
+}
+
+define('DB_HOST', $dbHost);
+define('DB_NAME', $dbName);
+define('DB_USER', $dbUser);
+define('DB_PASS', $dbPass);
 define('DB_CHARSET', 'utf8mb4');
+define('ALLOW_WEB_INSTALL', (getenv('ALLOW_WEB_INSTALL') === 'true' || (isset($_ENV['ALLOW_WEB_INSTALL']) && $_ENV['ALLOW_WEB_INSTALL'] === 'true')));
 
 // Application Paths & URLs
 define('APP_NAME', 'We Onboard');
