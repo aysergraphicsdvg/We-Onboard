@@ -181,22 +181,27 @@ class Store {
     this.state.notifications = [notif, ...this.state.notifications];
   }
 
-  // Auth Operations
-  loginAdmin(email: string, password?: string): boolean {
+  setAuthenticatedAdmin(user: AdminUser | null) {
+    this.state.currentAdmin = user;
+    this.save();
+  }
+
+  // Auth Operations (Local sandbox fallback for offline preview testing only)
+  loginAdminPreview(email: string): boolean {
     const user = this.state.adminUsers.find((u) => u.email.toLowerCase() === email.trim().toLowerCase());
     if (user && user.isActive) {
-      if (password && password.trim() !== 'WeOnboard@2026' && password.trim() !== 'Admin@123' && password.trim() !== 'admin123') {
-        this.logAudit('Failed Admin Login Attempt', 'Auth', 'SECURITY_EVENT', `Incorrect password attempt for: ${email}`);
-        return false;
-      }
       user.lastLogin = new Date().toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' });
       this.state.currentAdmin = user;
-      this.logAudit('Admin Login Successful', 'Auth', user.id, `User ${user.name} logged in with role ${user.role}`);
+      this.logAudit('Sandbox Admin Session', 'Auth', user.id, `User ${user.name} entered preview sandbox with role ${user.role}`);
       this.save();
       return true;
     }
-    this.logAudit('Failed Admin Login Attempt', 'Auth', 'SECURITY_EVENT', `Failed login attempt for email: ${email}`);
+    this.logAudit('Failed Sandbox Login', 'Auth', 'SECURITY_EVENT', `Failed login attempt for email: ${email}`);
     return false;
+  }
+
+  loginAdmin(email: string): boolean {
+    return this.loginAdminPreview(email);
   }
 
   logoutAdmin() {

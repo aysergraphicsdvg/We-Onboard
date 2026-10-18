@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, CheckCircle2, Building2, ArrowRight } from 'lucide-react';
 import { store } from '../../services/store';
+import { api } from '../../services/api';
 
 interface MsmeRequestModalProps {
   onClose: () => void;
@@ -39,29 +40,41 @@ export const MsmeRequestModal: React.FC<MsmeRequestModalProps> = ({ onClose }) =
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!businessName || !applicantName || !phone) {
       alert('Please fill business name, applicant name, and phone number.');
       return;
     }
 
-    const created = store.addMsmeRequest({
-      businessName,
-      applicantName,
-      phone,
-      email: email || 'contact@msme.in',
-      city,
-      state,
-      category,
-      stage,
-      currentRegistrations: ['GST'],
-      requestedServices: selectedServices.length ? selectedServices : ['Udyam registration assistance'],
-      description: description || 'Guidance requested for business expansion registrations.',
-      disclosedAssistanceFee: 3500
-    });
+    setIsSubmitting(true);
+    try {
+      const res = await api.submitMsmeRequest({
+        business_name: businessName,
+        applicant_name: applicantName,
+        phone,
+        email: email || 'contact@msme.in',
+        city,
+        state,
+        category,
+        stage,
+        requested_services: selectedServices.length ? selectedServices : ['Udyam registration assistance'],
+        description: description || 'Guidance requested for business expansion registrations.'
+      });
 
-    setSubmittedId(created.id);
+      if (res.success && res.reference_id) {
+        setSubmittedId(res.reference_id);
+      } else {
+        alert(res.error || 'Failed to submit proposal request. Please try again.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error submitting request. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (

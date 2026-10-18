@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ArrowLeft, ArrowRight, CheckCircle2, User, MapPin, Briefcase, ShieldCheck, FileUp } from 'lucide-react';
 import { store } from '../../services/store';
+import { api } from '../../services/api';
 import { FreelancerRole } from '../../types';
 
 interface FreelancerRegisterPageProps {
@@ -52,38 +53,51 @@ export const FreelancerRegisterPage: React.FC<FreelancerRegisterPageProps> = ({ 
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!fullName || !phone || !email || !isAdult || !hasSmartphone) {
       alert('Please fill all mandatory fields and confirm eligibility requirements.');
       return;
     }
 
-    const newFreelancer = store.registerFreelancer({
-      fullName,
-      email,
-      phone,
-      dob,
-      gender,
-      residentialAddress: address || 'Indiranagar, Bengaluru',
-      city,
-      state,
-      pinCode,
-      isAdult,
-      hasSmartphone,
-      languages: languages.length ? languages : ['Kannada', 'English'],
-      preferredAreas: preferredAreas.length ? preferredAreas : ['Indiranagar'],
-      preferredWorkType: workType,
-      education,
-      previousExperienceYears: Number(experienceYears) || 0,
-      salesFieldExperience: salesExperience,
-      skills: skills.split(',').map((s) => s.trim()),
-      preferredRole,
-      previousEmployer: previousEmployer || undefined,
-      verificationNotes: 'Candidate registered through public portal. Verification pending.'
-    });
+    setIsSubmitting(true);
+    try {
+      const res = await api.registerFreelancer({
+        full_name: fullName,
+        email,
+        phone,
+        dob,
+        gender,
+        residential_address: address || 'Indiranagar, Bengaluru',
+        city,
+        state,
+        pin_code: pinCode,
+        is_adult: isAdult,
+        has_smartphone: hasSmartphone,
+        languages: languages.length ? languages : ['Kannada', 'English'],
+        preferred_areas: preferredAreas.length ? preferredAreas : ['Indiranagar'],
+        preferred_work_type: workType,
+        education,
+        previous_experience_years: Number(experienceYears) || 0,
+        sales_field_experience: salesExperience,
+        skills: skills.split(',').map((s) => s.trim()),
+        preferred_role: preferredRole,
+        previous_employer: previousEmployer || undefined
+      });
 
-    setSubmittedId(newFreelancer.id);
+      if (res.success && res.reference_id) {
+        setSubmittedId(res.reference_id);
+      } else {
+        alert(res.error || 'Failed to submit registration. Please try again.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error submitting registration. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (

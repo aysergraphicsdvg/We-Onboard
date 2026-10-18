@@ -1,0 +1,26 @@
+# We Onboard API Subdomain Routing
+# Hostinger Document Root: public_html/api/
+
+RewriteEngine On
+RewriteBase /
+
+# 1. Strip redundant /api/ prefix if requested on api.weonboard.in subdomain (prevents /api/api/ path duplication)
+RewriteRule ^api/(.*)$ $1 [L,QSA]
+
+# 2. Support clean URLs without .php extension (e.g. /v1/health -> /v1/health.php)
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME}.php -f
+RewriteRule ^(.*)$ $1.php [L,QSA]
+
+# 3. Handle OPTIONS pre-flight
+RewriteCond %{REQUEST_METHOD} OPTIONS
+RewriteRule ^(.*)$ - [R=204,L]
+
+# 4. Prevent directory browsing & protect sensitive files
+Options -Indexes
+<FilesMatch "(\.(bak|config|sql|fla|psd|ini|log|sh|inc|swp|dist|env)|~)$">
+    Order allow,deny
+    Deny from all
+    Satisfy All
+</FilesMatch>

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Phone, Mail, MapPin, Clock, ArrowRight, CheckCircle2, MessageSquare } from 'lucide-react';
 import { store } from '../../services/store';
+import { api } from '../../services/api';
 import { EnquiryType, ServiceCategory } from '../../types';
 
 interface ContactFormProps {
@@ -23,9 +24,10 @@ export const ContactForm: React.FC<ContactFormProps> = ({ preselectedService }) 
   const [consent, setConsent] = useState(true);
 
   const [submittedRef, setSubmittedRef] = useState<string | null>(null);
+  const [submissionStorage, setSubmissionStorage] = useState<'mysql_server' | 'preview_sandbox'>('mysql_server');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!fullName || !phone || !consent) {
       alert('Please complete all required fields and accept the contact consent.');
@@ -35,25 +37,30 @@ export const ContactForm: React.FC<ContactFormProps> = ({ preselectedService }) 
     setIsSubmitting(true);
 
     try {
-      const created = store.addEnquiry({
-        fullName,
-        companyName: companyName || undefined,
+      const res = await api.submitEnquiry({
+        full_name: fullName,
+        company_name: companyName || undefined,
         phone,
         email: email || 'contact@client.in',
-        enquiryType,
+        enquiry_type: enquiryType,
         city: city || 'Bengaluru',
-        serviceRequired,
+        service_required: serviceRequired,
         message: message || `Enquiry for ${serviceRequired}`,
         consent: true,
         source: 'Website Contact Section'
       });
 
-      setSubmittedRef(created.id);
-      setIsSubmitting(false);
+      if (res.success && res.reference_id) {
+        setSubmittedRef(res.reference_id);
+        setSubmissionStorage(res.storage);
+      } else {
+        alert(res.error || 'Unable to submit enquiry. Please try again.');
+      }
     } catch (err) {
       console.error(err);
-      setIsSubmitting(false);
       alert('Error submitting enquiry. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -146,14 +153,27 @@ export const ContactForm: React.FC<ContactFormProps> = ({ preselectedService }) 
                     Enquiry Recorded Successfully!
                   </h3>
                   <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 max-w-md mx-auto text-sm text-slate-700">
-                    <span className="text-xs text-slate-500 block uppercase font-bold tracking-wider">
-                      Database Reference ID
-                    </span>
-                    <strong className="text-xl font-mono text-[#02167F] font-black">
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <span className="text-xs text-slate-500 uppercase font-bold tracking-wider">
+                        Reference ID
+                      </span>
+                      {submissionStorage === 'mysql_server' ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded">
+                          ✓ Hostinger MySQL
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded">
+                          ⚠ Offline Preview Cache
+                        </span>
+                      )}
+                    </div>
+                    <strong className="text-xl font-mono text-[#02167F] font-black block">
                       {submittedRef}
                     </strong>
                     <p className="text-xs text-slate-600 mt-2">
-                      Our Indiranagar operations team has been notified and assigned to review your requirements.
+                      {submissionStorage === 'mysql_server'
+                        ? 'Confirmed: Your request has been securely logged on the We Onboard server. Our operations team in Indiranagar will review your requirements shortly.'
+                        : 'Preview Sandbox Mode: Saved in your browser cache. When connected to https://api.weonboard.in, submissions persist to the production database.'}
                     </p>
                   </div>
 

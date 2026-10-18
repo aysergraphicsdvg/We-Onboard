@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Shield, ArrowLeft, Lock, Mail, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Shield, ArrowLeft, Lock, Mail, AlertCircle, AlertTriangle } from 'lucide-react';
 import { store } from '../../services/store';
+import { api } from '../../services/api';
 import { AdminUser } from '../../types';
 
 interface AdminLoginProps {
@@ -9,31 +10,40 @@ interface AdminLoginProps {
 }
 
 export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onBackToWebsite }) => {
-  const [email, setEmail] = useState('admin@weonboard.in');
-  const [password, setPassword] = useState('WeOnboard@2026');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [attempts, setAttempts] = useState(0);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSandboxNotice, setIsSandboxNotice] = useState(false);
 
   const adminUsers = store.getState().adminUsers;
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (attempts >= 5) {
-      setError('Too many login attempts. Temporary rate-limit lock in effect for 60 seconds.');
-      return;
-    }
+    setError('');
+    setIsSubmitting(true);
 
-    const ok = store.loginAdmin(email, password);
-    if (ok) {
-      onSuccess();
-    } else {
-      setAttempts((prev) => prev + 1);
-      setError('Invalid administrator credentials. Please check your work email and password.');
+    try {
+      const res = await api.loginAdmin(email, password);
+
+      if (res.success) {
+        onSuccess();
+      } else {
+        setError(res.error || 'Invalid administrator credentials. Please check your work email and password.');
+        if (res.storage === 'preview_sandbox') {
+          setIsSandboxNotice(true);
+        }
+      }
+    } catch {
+      setError('Unable to reach authentication server. Please check your network or try sandbox mode.');
+      setIsSandboxNotice(true);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const handleQuickLogin = (u: AdminUser) => {
-    store.loginAdmin(u.email, 'WeOnboard@2026');
+  const handleSandboxEnter = (u: AdminUser) => {
+    store.loginAdminPreview(u.email);
     onSuccess();
   };
 
@@ -79,9 +89,16 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onBackToWebsi
           </div>
 
           {error && (
-            <div className="bg-rose-50 border border-rose-200 text-rose-800 p-3 rounded-lg text-xs flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-              <span>{error}</span>
+            <div className="bg-rose-50 border border-rose-200 text-rose-800 p-3.5 rounded-xl text-xs flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold">{error}</p>
+                {isSandboxNotice && (
+                  <p className="text-[11px] text-rose-700 mt-1">
+                    Tip: If testing in an offline development environment without Hostinger PHP connectivity, you can use the Isolated Sandbox below.
+                  </p>
+                )}
+              </div>
             </div>
           )}
 
@@ -114,48 +131,56 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onBackToWebsi
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter administrator password"
                   className="w-full pl-9 pr-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-[#02167F] focus:outline-none"
                 />
               </div>
             </div>
 
             <div className="flex items-center justify-between text-xs text-slate-500">
-              <label className="flex items-center gap-1.5 cursor-pointer">
-                <input type="checkbox" defaultChecked className="rounded text-[#02167F]" />
-                <span>Keep session active</span>
-              </label>
+              <span className="text-[11px] text-slate-500">
+                Rate-limited server verification
+              </span>
               <span className="text-[11px] font-mono text-emerald-700 font-bold">
-                ✓ CSRF Protected
+                ✓ BCrypt &amp; CSRF Protected
               </span>
             </div>
 
             <button
               type="submit"
-              className="w-full bg-[#02167F] hover:bg-[#031d99] text-[#FFD014] font-extrabold py-3 rounded-xl text-sm transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2"
+              disabled={isSubmitting}
+              className="w-full bg-[#02167F] hover:bg-[#031d99] text-[#FFD014] font-extrabold py-3 rounded-xl text-sm transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer"
             >
               <Shield className="w-4 h-4" />
-              <span>Sign In to Dashboard &rarr;</span>
+              <span>{isSubmitting ? 'Authenticating...' : 'Sign In to Dashboard →'}</span>
             </button>
           </form>
 
-          {/* Quick Demo Logins for Reviewers */}
+          {/* Development / Preview Sandbox Mode (Explicitly Labeled) */}
           <div className="pt-4 border-t border-slate-100">
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2 text-center">
-              One-Click Role Authentication (Demo)
-            </span>
+            <div className="flex items-center justify-center gap-1.5 mb-2">
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+              <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                Isolated Preview Sandbox (No Server Connection)
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500 text-center mb-2.5">
+              Select a simulated role profile to evaluate UI layouts without connecting to live Hostinger MySQL.
+            </p>
             <div className="space-y-1.5">
-              {adminUsers.map((u) => (
+              {adminUsers.slice(0, 3).map((u) => (
                 <button
                   key={u.id}
-                  onClick={() => handleQuickLogin(u)}
-                  className="w-full text-left p-2 rounded-lg border border-slate-200 hover:border-[#02167F] hover:bg-blue-50/50 transition-colors flex items-center justify-between text-xs"
+                  onClick={() => handleSandboxEnter(u)}
+                  className="w-full text-left p-2 rounded-lg border border-slate-200 hover:border-[#02167F] hover:bg-blue-50/50 transition-colors flex items-center justify-between text-xs cursor-pointer"
+                  title="Enter local preview sandbox with this role profile"
                 >
                   <div>
                     <strong className="text-slate-900 block font-bold">{u.name}</strong>
                     <span className="text-slate-500 text-[11px]">{u.email}</span>
                   </div>
                   <span className="font-mono text-[10px] bg-slate-100 px-2 py-0.5 rounded text-[#02167F] font-bold">
-                    {u.role}
+                    Sandbox: {u.role}
                   </span>
                 </button>
               ))}
@@ -165,7 +190,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onBackToWebsi
         </div>
 
         <p className="text-center text-xs text-white/60">
-          Route: /admin/login.php &bull; Session Regulated &bull; We Onboard Indiranagar
+          Target API: https://api.weonboard.in/v1 &bull; Hostinger Shared Hosting
         </p>
 
       </div>

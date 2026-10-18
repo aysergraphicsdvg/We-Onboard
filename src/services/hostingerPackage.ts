@@ -24,7 +24,7 @@ RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 Options -Indexes
 
 # 3. Protect sensitive directories from direct web browsing
-RewriteRule ^(config|database|logs|storage)/ - [F,L]
+RewriteRule ^(config|database|logs|storage|scripts)/ - [F,L]
 
 # 4. Deny direct access to hidden files and SQL backups
 <FilesMatch "(\.(bak|config|sql|fla|psd|ini|log|sh|inc|swp|dist|env)|~)$">
@@ -43,6 +43,80 @@ RewriteRule ^(config|database|logs|storage)/ - [F,L]
 
 # 6. Clean routing fallbacks
 DirectoryIndex index.php index.html
+`
+    },
+    {
+      path: 'api/.htaccess',
+      description: 'Dedicated routing and rewrite rules for https://api.weonboard.in document root',
+      content: `# We Onboard API Subdomain Routing
+# Document Root: public_html/api/
+
+RewriteEngine On
+RewriteBase /
+
+# 1. Strip redundant /api/ prefix if requested on api.weonboard.in subdomain (prevents /api/api/ path duplication)
+RewriteRule ^api/(.*)$ $1 [L,QSA]
+
+# 2. Support clean URLs without .php extension (e.g. /v1/health -> /v1/health.php)
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME}.php -f
+RewriteRule ^(.*)$ $1.php [L,QSA]
+
+# 3. Handle OPTIONS pre-flight
+RewriteCond %{REQUEST_METHOD} OPTIONS
+RewriteRule ^(.*)$ - [R=204,L]
+
+# 4. Prevent directory browsing & protect sensitive files
+Options -Indexes
+<FilesMatch "(\.(bak|config|sql|fla|psd|ini|log|sh|inc|swp|dist|env)|~)$">
+    Order allow,deny
+    Deny from all
+    Satisfy All
+</FilesMatch>
+`
+    },
+    {
+      path: 'config/cors.php',
+      description: 'Strict CORS origin validation without wildcards for credentials',
+      content: `<?php
+/**
+ * Strict CORS origin verification for We Onboard API
+ * Enforces authorized frontend origins; disallows wildcard with credentials
+ */
+
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+$allowedOrigins = [
+    'https://weonboard.in',
+    'https://www.weonboard.in',
+    'https://api.weonboard.in',
+    'https://aysergraphicsdvg.github.io',
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:5173'
+];
+
+$isAllowed = false;
+if (in_array($origin, $allowedOrigins, true)) {
+    $isAllowed = true;
+} elseif (preg_match('/^https:\\/\\/[a-z0-9\\-]+\\.run\\.app$/', $origin)) {
+    // Development / Google Cloud Run preview environments
+    $isAllowed = true;
+}
+
+if ($isAllowed && !empty($origin)) {
+    header("Access-Control-Allow-Origin: $origin");
+    header("Access-Control-Allow-Credentials: true");
+    header("Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE");
+    header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, X-CSRF-Token, X-Idempotency-Key");
+    header("Access-Control-Max-Age: 86400");
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(204);
+    exit;
+}
 `
     },
     {
@@ -123,7 +197,7 @@ class Database {
                 self::$instance = new PDO($dsn, DB_USER, DB_PASS, $options);
             } catch (PDOException $e) {
                 error_log("Database connection failure: " . $e->getMessage());
-                die("A temporary database error occurred. Please contact the administrator.");
+                throw $e;
             }
         }
         return self::$instance;
@@ -369,6 +443,36 @@ CREATE TABLE IF NOT EXISTS \`hero_banners\` (
     \`is_active\` TINYINT(1) DEFAULT 1
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 12. Rate Limiting for Login & API Abuse Protection
+CREATE TABLE IF NOT EXISTS \`login_attempts\` (
+    \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+    \`ip_address\` VARCHAR(45) NOT NULL,
+    \`email\` VARCHAR(150) NOT NULL,
+    \`attempt_time\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_ip_time (\`ip_address\`, \`attempt_time\`),
+    INDEX idx_email_time (\`email\`, \`attempt_time\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 13. API Idempotency Keys (Deduplication across concurrent / repeated requests)
+CREATE TABLE IF NOT EXISTS \`idempotency_keys\` (
+    \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+    \`idempotency_key\` VARCHAR(64) NOT NULL UNIQUE,
+    \`endpoint\` VARCHAR(100) NOT NULL,
+    \`request_payload_hash\` VARCHAR(64) NOT NULL,
+    \`response_json\` TEXT NOT NULL,
+    \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_idem_key (\`idempotency_key\`),
+    INDEX idx_idem_time (\`created_at\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Initial System Roles Seed
+INSERT IGNORE INTO \`roles\` (\`id\`, \`name\`, \`description\`) VALUES
+(1, 'Super Admin', 'Full access to all platform records, settings, and team users'),
+(2, 'Administrator', 'Operations, project allocation, freelancer verification, and client management'),
+(3, 'Enquiry Manager', 'Inbound enquiry triage, client qualification, and sales tracking'),
+(4, 'Freelancer Coordinator', 'Manage freelancer onboarding and verifications'),
+(5, 'Project Manager', 'Manage field projects and tasks');
+
 SET FOREIGN_KEY_CHECKS = 1;
 `
     },
@@ -385,6 +489,24 @@ ON DUPLICATE KEY UPDATE setting_key = setting_key;
 
 -- Ensure audit_logs index
 CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_logs (created_at);
+`
+    },
+    {
+      path: 'database/migrations/002_idempotency_and_constraints.sql',
+      description: 'Non-destructive migration 002 for idempotency and database constraints',
+      content: `-- We Onboard Non-Destructive Migration 002: Idempotency & Duplicate Prevention
+CREATE TABLE IF NOT EXISTS \`idempotency_keys\` (
+    \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+    \`idempotency_key\` VARCHAR(64) NOT NULL UNIQUE,
+    \`endpoint\` VARCHAR(100) NOT NULL,
+    \`request_payload_hash\` VARCHAR(64) NOT NULL,
+    \`response_json\` TEXT NOT NULL,
+    \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_idem_key (\`idempotency_key\`),
+    INDEX idx_idem_time (\`created_at\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX IF NOT EXISTS idx_converted_client ON enquiries (converted_client_id);
 `
     },
     {
@@ -539,8 +661,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       path: 'admin/auth_check.php',
       description: 'Server-side authentication and RBAC session middleware for admin pages',
       content: `<?php
-require_once dirname(__DIR__) . '/config/config.php';
-require_once dirname(__DIR__) . '/config/database.php';
+$rootCandidates = [dirname(__DIR__), dirname(__DIR__, 2), __DIR__];
+$root = '';
+foreach ($rootCandidates as $cand) {
+    if (file_exists($cand . '/config/config.php')) {
+        $root = $cand;
+        break;
+    }
+}
+if (!$root) {
+    http_response_code(500);
+    die("System configuration error: config/config.php not found.");
+}
+require_once $root . '/config/config.php';
+require_once $root . '/config/database.php';
 
 if (empty($_SESSION['admin_id'])) {
     header('Location: /admin/login.php');
@@ -557,44 +691,96 @@ if (!$currentAdmin) {
     header('Location: /admin/login.php?error=session_expired');
     exit;
 }
+
+/**
+ * Server-authoritative Role Verification Helper
+ * Enforces role capabilities on the server rather than trusting frontend state
+ */
+function require_role($allowed_roles = ['Super Admin']) {
+    global $currentAdmin;
+    $allowed = (array)$allowed_roles;
+    if (!$currentAdmin || !in_array($currentAdmin['role_name'], $allowed, true)) {
+        http_response_code(403);
+        die("<!DOCTYPE html><html><head><title>403 Forbidden</title></head><body style='font-family: sans-serif; padding: 40px; text-align: center;'><h1 style='color: #02167F;'>403 Forbidden</h1><p>You do not have the required permissions to access this administrative resource.</p><p><a href='/admin/dashboard.php'>&larr; Return to Dashboard</a></p></body></html>");
+    }
+}
 `
     },
     {
       path: 'admin/login.php',
       description: 'Admin Login page with password_verify, CSRF token, rate limiting & session regeneration',
       content: `<?php
-require_once dirname(__DIR__) . '/config/config.php';
-require_once dirname(__DIR__) . '/config/database.php';
+$rootCandidates = [dirname(__DIR__), dirname(__DIR__, 2), __DIR__];
+$root = '';
+foreach ($rootCandidates as $cand) {
+    if (file_exists($cand . '/config/config.php')) {
+        $root = $cand;
+        break;
+    }
+}
+if (!$root) {
+    http_response_code(500);
+    die("System configuration error: config/config.php not found.");
+}
+require_once $root . '/config/config.php';
+require_once $root . '/config/database.php';
 
 $error = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     verify_csrf();
-    $email = trim($_POST['email'] ?? '');
+    $email = strtolower(trim($_POST['email'] ?? ''));
     $pass = $_POST['password'] ?? '';
+    $ip = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
 
-    $db = Database::getConnection();
-    $stmt = $db->prepare("SELECT * FROM admin_users WHERE email = ? AND is_active = 1 LIMIT 1");
-    $stmt->execute([$email]);
-    $user = $stmt->fetch();
+    try {
+        $db = Database::getConnection();
 
-    if ($user && password_verify($pass, $user['password_hash'])) {
-        session_regenerate_id(true);
-        $_SESSION['admin_id'] = $user['id'];
-        $_SESSION['admin_name'] = $user['name'];
-        $_SESSION['admin_role_id'] = $user['role_id'];
+        // Rate limiting check (15 minutes, 5 attempts max, IP or Email dual-check)
+        $rateStmt = $db->prepare("SELECT COUNT(*) FROM login_attempts WHERE (ip_address = ? OR email = ?) AND attempt_time > DATE_SUB(NOW(), INTERVAL 15 MINUTE)");
+        $rateStmt->execute([$ip, $email]);
+        $failedCount = (int)$rateStmt->fetchColumn();
 
-        $update = $db->prepare("UPDATE admin_users SET last_login = NOW() WHERE id = ?");
-        $update->execute([$user['id']]);
+        if ($failedCount >= 5) {
+            $error = 'Too many failed login attempts. Account access is temporarily locked for 15 minutes.';
+        } else {
+            $stmt = $db->prepare("SELECT * FROM admin_users WHERE LOWER(email) = ? AND is_active = 1 LIMIT 1");
+            $stmt->execute([$email]);
+            $user = $stmt->fetch();
 
-        // Audit Log
-        $audit = $db->prepare("INSERT INTO audit_logs (acting_user, action, record_type, record_id, details, ip_address) VALUES (?, 'Login', 'Auth', ?, 'Successful admin login', ?)");
-        $audit->execute([$user['name'], $user['id'], $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1']);
+            if ($user && password_verify($pass, $user['password_hash'])) {
+                // Clear attempts
+                $clearStmt = $db->prepare("DELETE FROM login_attempts WHERE ip_address = ? OR email = ?");
+                $clearStmt->execute([$ip, $email]);
 
-        header('Location: /admin/dashboard.php');
-        exit;
-    } else {
-        $error = 'Invalid credentials or inactive account.';
+                session_regenerate_id(true);
+                $_SESSION['admin_id'] = $user['id'];
+                $_SESSION['admin_name'] = $user['name'];
+                $_SESSION['admin_role_id'] = $user['role_id'];
+
+                $update = $db->prepare("UPDATE admin_users SET last_login = NOW() WHERE id = ?");
+                $update->execute([$user['id']]);
+
+                // Audit Log (never log secrets)
+                $audit = $db->prepare("INSERT INTO audit_logs (acting_user, action, record_type, record_id, details, ip_address) VALUES (?, 'Login', 'Auth', ?, 'Successful admin login via web portal', ?)");
+                $audit->execute([$user['name'], $user['id'], $ip]);
+
+                header('Location: /admin/dashboard.php');
+                exit;
+            } else {
+                // Log failed attempt
+                $logAttempt = $db->prepare("INSERT INTO login_attempts (ip_address, email) VALUES (?, ?)");
+                $logAttempt->execute([$ip, $email]);
+
+                $auditStmt = $db->prepare("INSERT INTO audit_logs (acting_user, action, record_type, record_id, details, ip_address) VALUES (?, 'Failed Login', 'Auth', 'SECURITY_EVENT', 'Failed login attempt via web portal', ?)");
+                $auditStmt->execute([$email, $ip]);
+
+                $error = 'Invalid credentials or inactive account.';
+            }
+        }
+    } catch (Exception $e) {
+        error_log("Admin login error: " . $e->getMessage());
+        $error = 'Database service temporarily unavailable. Please try again later.';
     }
 }
 ?>
@@ -883,58 +1069,760 @@ $enquiries = $stmt->fetchAll();
 `
     },
     {
-      path: 'api/enquiry.php',
-      description: 'AJAX/POST endpoint for public contact form submissions',
+      path: 'api/v1/health.php',
+      description: 'API v1 Health & Database connectivity probe (generic status, no secret leakage)',
       content: `<?php
-require_once dirname(__DIR__) . '/config/config.php';
-require_once dirname(__DIR__) . '/config/database.php';
+$rootCandidates = [dirname(__DIR__, 2), dirname(__DIR__, 3), dirname(__DIR__, 1)];
+$root = '';
+foreach ($rootCandidates as $cand) {
+    if (file_exists($cand . '/config/config.php')) {
+        $root = $cand;
+        break;
+    }
+}
+if (!$root) {
+    http_response_code(500);
+    header('Content-Type: application/json; charset=utf-8');
+    die(json_encode(['status' => 'error', 'message' => 'Configuration not found']));
+}
+require_once $root . '/config/config.php';
+require_once $root . '/config/cors.php';
+require_once $root . '/config/database.php';
 
-header('Content-Type: application/json');
+header('Content-Type: application/json; charset=utf-8');
+
+$dbStatus = 'unavailable';
+try {
+    $db = Database::getConnection();
+    if ($db) {
+        $stmt = $db->query("SELECT 1");
+        if ($stmt && $stmt->fetchColumn() == 1) {
+            $dbStatus = 'available';
+        }
+    }
+} catch (Exception $e) {
+    error_log("Health check database failure: " . $e->getMessage());
+    $dbStatus = 'unavailable';
+}
+
+$isHealthy = ($dbStatus === 'available');
+http_response_code($isHealthy ? 200 : 503);
+
+echo json_encode([
+    'status' => $isHealthy ? 'healthy' : 'degraded',
+    'service' => 'weonboard-api',
+    'version' => '1.0.0',
+    'database' => $dbStatus,
+    'timestamp' => date('c')
+], JSON_UNESCAPED_SLASHES);
+`
+    },
+    {
+      path: 'api/v1/enquiry.php',
+      description: 'API v1: Public business & enterprise enquiry handler (Prepared statements, validation, transaction & audit)',
+      content: `<?php
+$rootCandidates = [dirname(__DIR__, 2), dirname(__DIR__, 3), dirname(__DIR__, 1)];
+$root = '';
+foreach ($rootCandidates as $cand) {
+    if (file_exists($cand . '/config/config.php')) {
+        $root = $cand;
+        break;
+    }
+}
+if (!$root) {
+    http_response_code(500);
+    header('Content-Type: application/json; charset=utf-8');
+    die(json_encode(['success' => false, 'error' => 'System configuration not found']));
+}
+require_once $root . '/config/config.php';
+require_once $root . '/config/cors.php';
+require_once $root . '/config/database.php';
+
+header('Content-Type: application/json; charset=utf-8');
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
-    echo json_encode(['success' => false, 'error' => 'Method not allowed']);
+    echo json_encode(['success' => false, 'error' => 'Method not allowed. Use POST.']);
     exit;
 }
 
-$fullName = trim($_POST['full_name'] ?? '');
-$phone = trim($_POST['phone'] ?? '');
-$email = trim($_POST['email'] ?? '');
-$city = trim($_POST['city'] ?? 'Bengaluru');
-$service = trim($_POST['service_required'] ?? 'Other services');
-$message = trim($_POST['message'] ?? '');
-$enquiryType = trim($_POST['enquiry_type'] ?? 'Business');
+$rawInput = file_get_contents('php://input');
+$jsonInput = json_decode($rawInput, true);
+$data = is_array($jsonInput) ? $jsonInput : $_POST;
 
+$fullName = trim($data['full_name'] ?? '');
+$phone = trim($data['phone'] ?? '');
+$email = trim($data['email'] ?? '');
+$company = trim($data['company_name'] ?? '');
+$city = trim($data['city'] ?? 'Bengaluru');
+$service = trim($data['service_required'] ?? 'General enquiry');
+$message = trim($data['message'] ?? '');
+$enquiryType = trim($data['enquiry_type'] ?? 'Business');
+$source = trim($data['source'] ?? 'Website Contact Form');
+$idempotencyKey = trim($_SERVER['HTTP_X_IDEMPOTENCY_KEY'] ?? ($data['idempotency_key'] ?? ''));
+
+// Server-side validation
 if (empty($fullName) || empty($phone)) {
     http_response_code(400);
-    echo json_encode(['success' => false, 'error' => 'Name and contact phone number are required.']);
+    echo json_encode(['success' => false, 'error' => 'Full name and contact phone number are required.']);
+    exit;
+}
+
+// Clean phone (digits and optional leading +)
+$cleanPhone = preg_replace('/[^\d+]/', '', $phone);
+if (strlen(preg_replace('/\D/', '', $cleanPhone)) < 10) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'error' => 'Please provide a valid 10-digit phone number.']);
+    exit;
+}
+
+if (!empty($email) && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'error' => 'Please provide a valid email address.']);
+    exit;
+}
+
+$allowedEnquiryTypes = ['Business', 'Freelancer', 'MSME', 'Franchise / dealership brand', 'General enquiry'];
+if (!in_array($enquiryType, $allowedEnquiryTypes, true)) {
+    $enquiryType = 'Business';
+}
+
+$db = null;
+try {
+    $db = Database::getConnection();
+
+    // 1. Idempotency Check
+    if (!empty($idempotencyKey)) {
+        $idemStmt = $db->prepare("SELECT response_json FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1");
+        $idemStmt->execute([$idempotencyKey]);
+        $cached = $idemStmt->fetchColumn();
+        if ($cached) {
+            echo $cached;
+            exit;
+        }
+    }
+
+    // 2. Prevent immediate duplicate submissions (within last 2 minutes by same phone)
+    $dupCheck = $db->prepare("SELECT id FROM enquiries WHERE phone = ? AND created_at > DATE_SUB(NOW(), INTERVAL 2 MINUTE) LIMIT 1");
+    $dupCheck->execute([$cleanPhone]);
+    $existing = $dupCheck->fetch();
+    if ($existing) {
+        echo json_encode([
+            'success' => true,
+            'message' => 'Thank you! Your enquiry has already been received. Our operations team in Bangalore will contact you shortly.'
+        ]);
+        exit;
+    }
+
+    $db->beginTransaction();
+
+    $ref = 'WO-ENQ-' . date('Ymd') . '-' . rand(100, 999);
+
+    $stmt = $db->prepare("INSERT INTO enquiries 
+        (enquiry_ref, full_name, company_name, phone, email, enquiry_type, city, service_required, message, source, status) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'New')");
+    $stmt->execute([$ref, $fullName, $company ?: null, $cleanPhone, $email, $enquiryType, $city, $service, $message, $source]);
+
+    // Record audit log
+    $auditStmt = $db->prepare("INSERT INTO audit_logs (acting_user, action, record_type, record_id, details, ip_address) VALUES (?, ?, ?, ?, ?, ?)");
+    $auditStmt->execute(['Public Inbound', 'Public Enquiry Submitted', 'Enquiry', $ref, "New {$enquiryType} enquiry from {$fullName} ({$city})", $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1']);
+
+    $responseJson = json_encode([
+        'success' => true,
+        'reference_id' => $ref,
+        'message' => 'Thank you! Your enquiry has been received. Our operations team in Bangalore will contact you shortly.'
+    ]);
+
+    if (!empty($idempotencyKey)) {
+        $db->prepare("INSERT IGNORE INTO idempotency_keys (idempotency_key, endpoint, request_payload_hash, response_json) VALUES (?, ?, ?, ?)")
+           ->execute([$idempotencyKey, 'enquiry', hash('sha256', $rawInput), $responseJson]);
+    }
+
+    $db->commit();
+    echo $responseJson;
+} catch (Exception $e) {
+    if ($db && $db->inTransaction()) {
+        $db->rollBack();
+    }
+    error_log("Enquiry submission error: " . $e->getMessage());
+    http_response_code(500);
+    echo json_encode(['success' => false, 'error' => 'Unable to record enquiry at this time. Please contact us directly at +91 96111 09490.']);
+}
+`
+    },
+    {
+      path: 'api/v1/freelancers/register.php',
+      description: 'API v1: Public freelancer registration endpoint with validation & duplicate check',
+      content: `<?php
+$rootCandidates = [dirname(__DIR__, 2), dirname(__DIR__, 3), dirname(__DIR__, 1)];
+$root = '';
+foreach ($rootCandidates as $cand) {
+    if (file_exists($cand . '/config/config.php')) {
+        $root = $cand;
+        break;
+    }
+}
+if (!$root) {
+    http_response_code(500);
+    header('Content-Type: application/json; charset=utf-8');
+    die(json_encode(['success' => false, 'error' => 'System configuration not found']));
+}
+require_once $root . '/config/config.php';
+require_once $root . '/config/cors.php';
+require_once $root . '/config/database.php';
+
+header('Content-Type: application/json; charset=utf-8');
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    echo json_encode(['success' => false, 'error' => 'Method not allowed. Use POST.']);
+    exit;
+}
+
+$rawInput = file_get_contents('php://input');
+$jsonInput = json_decode($rawInput, true);
+$data = is_array($jsonInput) ? $jsonInput : $_POST;
+
+$fullName = trim($data['full_name'] ?? '');
+$phone = trim($data['phone'] ?? '');
+$email = strtolower(trim($data['email'] ?? ''));
+$dob = trim($data['dob'] ?? '2000-01-01');
+$gender = trim($data['gender'] ?? 'Male');
+$address = trim($data['residential_address'] ?? '');
+$city = trim($data['city'] ?? 'Bengaluru');
+$state = trim($data['state'] ?? 'Karnataka');
+$pinCode = trim($data['pin_code'] ?? '560038');
+$isAdult = !empty($data['is_adult']) ? 1 : 0;
+$hasSmartphone = !empty($data['has_smartphone']) ? 1 : 0;
+$languages = is_array($data['languages'] ?? null) ? implode(', ', $data['languages']) : ($data['languages'] ?? 'Kannada, English');
+$preferredAreas = is_array($data['preferred_areas'] ?? null) ? implode(', ', $data['preferred_areas']) : ($data['preferred_areas'] ?? 'Indiranagar');
+$workType = trim($data['preferred_work_type'] ?? 'Flexible');
+$education = trim($data['education'] ?? '12th Pass');
+$expYears = intval($data['previous_experience_years'] ?? 0);
+$salesExp = !empty($data['sales_field_experience']) ? 1 : 0;
+$skills = is_array($data['skills'] ?? null) ? implode(', ', $data['skills']) : ($data['skills'] ?? 'Field Operations');
+$preferredRole = trim($data['preferred_role'] ?? 'Rider / Delivery Partner');
+$prevEmployer = trim($data['previous_employer'] ?? '');
+
+$cleanPhone = preg_replace('/[^\d+]/', '', $phone);
+$digits = preg_replace('/\D/', '', $cleanPhone);
+
+if (empty($fullName) || empty($cleanPhone) || empty($email) || !$isAdult || !$hasSmartphone) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'error' => 'Mandatory fields missing: Full name, phone, email, adult confirmation (18+), and smartphone availability are required.']);
+    exit;
+}
+
+if (strlen($digits) < 10) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'error' => 'Please provide a valid 10-digit mobile number.']);
+    exit;
+}
+
+if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'error' => 'Please provide a valid email address.']);
+    exit;
+}
+
+$db = null;
+try {
+    $db = Database::getConnection();
+
+    // Check duplicates on phone or email (strict privacy: NEVER leak existing registration_ref)
+    $checkStmt = $db->prepare("SELECT id FROM freelancers WHERE phone = ? OR email = ? LIMIT 1");
+    $checkStmt->execute([$cleanPhone, $email]);
+    $existing = $checkStmt->fetch();
+
+    if ($existing) {
+        http_response_code(409);
+        echo json_encode([
+            'success' => false,
+            'error' => 'An application with this mobile number or email address has already been submitted. Our operations team reviews all applications within 24-48 hours.'
+        ]);
+        exit;
+    }
+
+    $db->beginTransaction();
+
+    $ref = 'WO-FR-' . date('Y') . '-' . str_pad((string)rand(100, 9999), 4, '0', STR_PAD_LEFT);
+
+    $stmt = $db->prepare("INSERT INTO freelancers 
+        (registration_ref, full_name, email, phone, dob, gender, residential_address, city, state, pin_code, is_adult, has_smartphone, languages, preferred_areas, preferred_work_type, education, previous_experience_years, sales_field_experience, skills, preferred_role, previous_employer, status) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Submitted')");
+    
+    $stmt->execute([
+        $ref, $fullName, $email, $cleanPhone, $dob, $gender, $address, $city, $state, $pinCode,
+        $isAdult, $hasSmartphone, $languages, $preferredAreas, $workType, $education,
+        $expYears, $salesExp, $skills, $preferredRole, $prevEmployer ?: null
+    ]);
+
+    // Record audit
+    $auditStmt = $db->prepare("INSERT INTO audit_logs (acting_user, action, record_type, record_id, details, ip_address) VALUES (?, ?, ?, ?, ?, ?)");
+    $auditStmt->execute(['Public Candidate', 'Freelancer Registration Submitted', 'Freelancer', $ref, "{$fullName} registered for {$preferredRole} in {$city}", $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1']);
+
+    $db->commit();
+
+    echo json_encode([
+        'success' => true,
+        'reference_id' => $ref,
+        'message' => 'Application submitted successfully under Zero Joining Fee policy. Our Bangalore team will review within 24-48 hours.'
+    ]);
+} catch (PDOException $e) {
+    if ($db && $db->inTransaction()) {
+        $db->rollBack();
+    }
+    if ($e->getCode() === '23000' || strpos($e->getMessage(), 'Duplicate entry') !== false) {
+        http_response_code(409);
+        echo json_encode(['success' => false, 'error' => 'A registration with this phone number or email already exists in our system.']);
+        exit;
+    }
+    error_log("Freelancer registration error: " . $e->getMessage());
+    http_response_code(500);
+    echo json_encode(['success' => false, 'error' => 'Unable to complete registration at this time. Please try again or contact support at mail@weonboard.in.']);
+} catch (Exception $e) {
+    if ($db && $db->inTransaction()) {
+        $db->rollBack();
+    }
+    error_log("Freelancer registration error: " . $e->getMessage());
+    http_response_code(500);
+    echo json_encode(['success' => false, 'error' => 'Unable to complete registration at this time. Please try again or contact support at mail@weonboard.in.']);
+}
+`
+    },
+    {
+      path: 'api/v1/msme_request.php',
+      description: 'API v1: Government & Nodal Agency Desk Request Endpoint',
+      content: `<?php
+$rootCandidates = [dirname(__DIR__, 2), dirname(__DIR__, 3), dirname(__DIR__, 1)];
+$root = '';
+foreach ($rootCandidates as $cand) {
+    if (file_exists($cand . '/config/config.php')) {
+        $root = $cand;
+        break;
+    }
+}
+if (!$root) {
+    http_response_code(500);
+    header('Content-Type: application/json; charset=utf-8');
+    die(json_encode(['success' => false, 'error' => 'System configuration not found']));
+}
+require_once $root . '/config/config.php';
+require_once $root . '/config/cors.php';
+require_once $root . '/config/database.php';
+
+header('Content-Type: application/json; charset=utf-8');
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    echo json_encode(['success' => false, 'error' => 'Method not allowed. Use POST.']);
+    exit;
+}
+
+$rawInput = file_get_contents('php://input');
+$jsonInput = json_decode($rawInput, true);
+$data = is_array($jsonInput) ? $jsonInput : $_POST;
+
+$businessName = trim($data['business_name'] ?? '');
+$applicantName = trim($data['applicant_name'] ?? '');
+$phone = trim($data['phone'] ?? '');
+$email = trim($data['email'] ?? '');
+$city = trim($data['city'] ?? 'Bengaluru');
+$state = trim($data['state'] ?? 'Karnataka');
+$category = trim($data['category'] ?? 'Micro');
+$stage = trim($data['stage'] ?? '1-3 Years');
+$services = is_array($data['requested_services'] ?? null) ? implode(', ', $data['requested_services']) : ($data['requested_services'] ?? 'Government Scheme Operations');
+$description = trim($data['description'] ?? '');
+$idempotencyKey = trim($_SERVER['HTTP_X_IDEMPOTENCY_KEY'] ?? ($data['idempotency_key'] ?? ''));
+
+$cleanPhone = preg_replace('/[^\d+]/', '', $phone);
+
+if (empty($businessName) || empty($applicantName) || empty($cleanPhone)) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'error' => 'Entity name, applicant name, and contact phone number are required.']);
+    exit;
+}
+
+$db = null;
+try {
+    $db = Database::getConnection();
+
+    // 1. Idempotency Check
+    if (!empty($idempotencyKey)) {
+        $idemStmt = $db->prepare("SELECT response_json FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1");
+        $idemStmt->execute([$idempotencyKey]);
+        $cached = $idemStmt->fetchColumn();
+        if ($cached) {
+            echo $cached;
+            exit;
+        }
+    }
+
+    // 2. Prevent immediate duplicate submissions (within 5 minutes by same phone)
+    $dupCheck = $db->prepare("SELECT request_ref FROM msme_requests WHERE phone = ? AND created_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE) LIMIT 1");
+    $dupCheck->execute([$cleanPhone]);
+    $existing = $dupCheck->fetch();
+    if ($existing) {
+        echo json_encode([
+            'success' => true,
+            'reference_id' => $existing['request_ref'],
+            'message' => 'Department proposal already recorded under reference ' . $existing['request_ref'] . '. Our State Operations Director will connect shortly.'
+        ]);
+        exit;
+    }
+
+    $db->beginTransaction();
+
+    $ref = 'MSME-' . date('Y') . '-' . rand(1000, 9999);
+
+    $stmt = $db->prepare("INSERT INTO msme_requests (request_ref, business_name, applicant_name, phone, email, city, state, category, stage, requested_services, description, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'New')");
+    $stmt->execute([$ref, $businessName, $applicantName, $cleanPhone, $email, $city, $state, $category, $stage, $services, $description]);
+
+    $auditStmt = $db->prepare("INSERT INTO audit_logs (acting_user, action, record_type, record_id, details, ip_address) VALUES (?, ?, ?, ?, ?, ?)");
+    $auditStmt->execute(['Government / MSME Desk', 'Proposal Request Logged', 'MSME', $ref, "Request logged for {$businessName} ({$category})", $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1']);
+
+    $responseJson = json_encode([
+        'success' => true,
+        'reference_id' => $ref,
+        'message' => 'Department proposal received. Our State Operations Director will connect shortly.'
+    ]);
+
+    if (!empty($idempotencyKey)) {
+        $db->prepare("INSERT IGNORE INTO idempotency_keys (idempotency_key, endpoint, request_payload_hash, response_json) VALUES (?, ?, ?, ?)")
+           ->execute([$idempotencyKey, 'msme_request', hash('sha256', $rawInput), $responseJson]);
+    }
+
+    $db->commit();
+    echo $responseJson;
+} catch (Exception $e) {
+    if ($db && $db->inTransaction()) {
+        $db->rollBack();
+    }
+    error_log("MSME request error: " . $e->getMessage());
+    http_response_code(500);
+    echo json_encode(['success' => false, 'error' => 'Unable to record proposal at this time. Please contact our nodal desk directly at mail@weonboard.in.']);
+}
+`
+    },
+    {
+      path: 'api/v1/auth/login.php',
+      description: 'API v1: Secure Admin Login with Rate Limiting, password_verify, session regeneration & audit',
+      content: `<?php
+$rootCandidates = [dirname(__DIR__, 2), dirname(__DIR__, 3), dirname(__DIR__, 1)];
+$root = '';
+foreach ($rootCandidates as $cand) {
+    if (file_exists($cand . '/config/config.php')) {
+        $root = $cand;
+        break;
+    }
+}
+if (!$root) {
+    http_response_code(500);
+    header('Content-Type: application/json; charset=utf-8');
+    die(json_encode(['success' => false, 'error' => 'System configuration not found']));
+}
+require_once $root . '/config/config.php';
+require_once $root . '/config/cors.php';
+require_once $root . '/config/database.php';
+
+header('Content-Type: application/json; charset=utf-8');
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    echo json_encode(['success' => false, 'error' => 'Method not allowed. Use POST.']);
+    exit;
+}
+
+$rawInput = file_get_contents('php://input');
+$jsonInput = json_decode($rawInput, true);
+$data = is_array($jsonInput) ? $jsonInput : $_POST;
+
+$email = strtolower(trim($data['email'] ?? ''));
+$password = $data['password'] ?? '';
+$ip = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
+
+if (empty($email) || empty($password)) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'error' => 'Email and password are required.']);
     exit;
 }
 
 try {
     $db = Database::getConnection();
-    $ref = 'WO-ENQ-' . rand(1000, 9999);
 
-    $stmt = $db->prepare("INSERT INTO enquiries (enquiry_ref, full_name, phone, email, enquiry_type, city, service_required, message, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'New')");
-    $stmt->execute([$ref, $fullName, $phone, $email, $enquiryType, $city, $service, $message]);
+    // 1. Rate limiting: Check failed attempts within last 15 minutes
+    $rateStmt = $db->prepare("SELECT COUNT(*) FROM login_attempts WHERE (ip_address = ? OR email = ?) AND attempt_time > DATE_SUB(NOW(), INTERVAL 15 MINUTE)");
+    $rateStmt->execute([$ip, $email]);
+    $failedCount = (int)$rateStmt->fetchColumn();
 
+    if ($failedCount >= 5) {
+        http_response_code(429);
+        echo json_encode([
+            'success' => false, 
+            'error' => 'Too many failed login attempts. Account access is temporarily locked for 15 minutes.'
+        ]);
+        exit;
+    }
+
+    // 2. Fetch active user
+    $stmt = $db->prepare("SELECT u.id, u.name, u.email, u.password_hash, u.role_id, u.is_active, r.name as role_name 
+                          FROM admin_users u 
+                          JOIN roles r ON u.role_id = r.id 
+                          WHERE LOWER(u.email) = ? LIMIT 1");
+    $stmt->execute([$email]);
+    $user = $stmt->fetch();
+
+    // 3. Verify password hash
+    if ($user && (int)$user['is_active'] === 1 && password_verify($password, $user['password_hash'])) {
+        // Clear failed login attempts on success
+        $clearStmt = $db->prepare("DELETE FROM login_attempts WHERE ip_address = ? OR email = ?");
+        $clearStmt->execute([$ip, $email]);
+
+        // Regenerate session ID to prevent fixation
+        session_regenerate_id(true);
+        $_SESSION['admin_id'] = $user['id'];
+        $_SESSION['admin_name'] = $user['name'];
+        $_SESSION['admin_email'] = $user['email'];
+        $_SESSION['admin_role'] = $user['role_name'];
+        $_SESSION['admin_role_id'] = $user['role_id'];
+
+        // Update last_login
+        $db->prepare("UPDATE admin_users SET last_login = NOW() WHERE id = ?")->execute([$user['id']]);
+
+        // Audit log
+        $auditStmt = $db->prepare("INSERT INTO audit_logs (acting_user, action, record_type, record_id, details, ip_address) VALUES (?, 'Login', 'Auth', ?, 'Successful admin authentication via API', ?)");
+        $auditStmt->execute([$user['name'], (string)$user['id'], $ip]);
+
+        echo json_encode([
+            'success' => true,
+            'message' => 'Authentication successful.',
+            'user' => [
+                'id' => (string)$user['id'],
+                'name' => $user['name'],
+                'email' => $user['email'],
+                'role' => $user['role_name']
+            ]
+        ]);
+        exit;
+    }
+
+    // 4. Failed authentication: log attempt and return generic error
+    $logAttempt = $db->prepare("INSERT INTO login_attempts (ip_address, email) VALUES (?, ?)");
+    $logAttempt->execute([$ip, $email]);
+
+    $auditStmt = $db->prepare("INSERT INTO audit_logs (acting_user, action, record_type, record_id, details, ip_address) VALUES (?, 'Failed Login', 'Auth', 'SECURITY_EVENT', 'Failed login attempt', ?)");
+    $auditStmt->execute([$email, $ip]);
+
+    http_response_code(401);
     echo json_encode([
-        'success' => true,
-        'reference_id' => $ref,
-        'message' => 'Thank you! Your enquiry has been received. Our operations team in Bangalore will contact you shortly.'
+        'success' => false, 
+        'error' => 'Invalid credentials. Please check your email and password.'
     ]);
 } catch (Exception $e) {
+    error_log("Login server error: " . $e->getMessage());
     http_response_code(500);
-    echo json_encode(['success' => false, 'error' => 'Unable to save enquiry. Please contact us directly at +91 96111 09490.']);
+    echo json_encode(['success' => false, 'error' => 'Authentication service temporarily unavailable. Please try again shortly.']);
 }
+`
+    },
+    {
+      path: 'api/v1/auth/logout.php',
+      description: 'API v1: Secure Session Invalidation & Logout',
+      content: `<?php
+$rootCandidates = [dirname(__DIR__, 2), dirname(__DIR__, 3), dirname(__DIR__, 1)];
+$root = '';
+foreach ($rootCandidates as $cand) {
+    if (file_exists($cand . '/config/config.php')) {
+        $root = $cand;
+        break;
+    }
+}
+if (!$root) {
+    http_response_code(500);
+    header('Content-Type: application/json; charset=utf-8');
+    die(json_encode(['success' => false, 'error' => 'System configuration not found']));
+}
+require_once $root . '/config/config.php';
+require_once $root . '/config/cors.php';
+
+$_SESSION = [];
+if (ini_get("session.use_cookies")) {
+    $params = session_get_cookie_params();
+    setcookie(session_name(), '', time() - 42000,
+        $params["path"], $params["domain"],
+        $params["secure"], $params["httponly"]
+    );
+}
+session_destroy();
+
+echo json_encode([
+    'success' => true,
+    'message' => 'Logged out successfully.'
+]);
+`
+    },
+    {
+      path: 'api/v1/auth/me.php',
+      description: 'API v1: Check current authenticated session user profile',
+      content: `<?php
+$rootCandidates = [dirname(__DIR__, 2), dirname(__DIR__, 3), dirname(__DIR__, 1)];
+$root = '';
+foreach ($rootCandidates as $cand) {
+    if (file_exists($cand . '/config/config.php')) {
+        $root = $cand;
+        break;
+    }
+}
+if (!$root) {
+    http_response_code(500);
+    header('Content-Type: application/json; charset=utf-8');
+    die(json_encode(['success' => false, 'error' => 'System configuration not found']));
+}
+require_once $root . '/config/config.php';
+require_once $root . '/config/cors.php';
+require_once $root . '/config/database.php';
+
+header('Content-Type: application/json; charset=utf-8');
+
+if (empty($_SESSION['admin_id'])) {
+    http_response_code(401);
+    echo json_encode(['success' => false, 'authenticated' => false]);
+    exit;
+}
+
+try {
+    $db = Database::getConnection();
+    $stmt = $db->prepare("SELECT u.id, u.name, u.email, r.name as role FROM admin_users u JOIN roles r ON u.role_id = r.id WHERE u.id = ? AND u.is_active = 1 LIMIT 1");
+    $stmt->execute([$_SESSION['admin_id']]);
+    $user = $stmt->fetch();
+
+    if ($user) {
+        echo json_encode([
+            'success' => true,
+            'authenticated' => true,
+            'user' => [
+                'id' => (string)$user['id'],
+                'name' => $user['name'],
+                'email' => $user['email'],
+                'role' => $user['role']
+            ]
+        ]);
+        exit;
+    }
+} catch (Exception $e) {
+    error_log("Session check error: " . $e->getMessage());
+}
+
+http_response_code(401);
+echo json_encode(['success' => false, 'authenticated' => false]);
+`
+    },
+    {
+      path: 'scripts/create_super_admin.php',
+      description: 'Secure CLI Provisioner for initial Super Admin (never commit plaintext passwords)',
+      content: `<?php
+/**
+ * Safe First-Super-Admin Provisioning CLI Tool
+ * We Onboard Platform
+ *
+ * Usage via CLI:
+ *   php scripts/create_super_admin.php "Full Name" "admin@weonboard.in" "StrongPassword123"
+ */
+
+if (php_sapi_name() !== 'cli') {
+    http_response_code(403);
+    die("Access Denied: This script must be executed via CLI only for security.\\n");
+}
+
+require_once dirname(__DIR__) . '/config/config.php';
+require_once dirname(__DIR__) . '/config/database.php';
+
+$name = $argv[1] ?? null;
+$email = $argv[2] ?? null;
+$pass = $argv[3] ?? null;
+
+if (empty($name)) {
+    echo "Enter Admin Full Name: ";
+    $name = trim(fgets(STDIN));
+}
+
+if (empty($email)) {
+    echo "Enter Admin Email: ";
+    $email = trim(fgets(STDIN));
+}
+
+if (empty($pass)) {
+    echo "Enter Strong Password (min 8 chars): ";
+    $pass = trim(fgets(STDIN));
+}
+
+if (strlen($pass) < 8) {
+    die("Error: Password must be at least 8 characters long.\\n");
+}
+
+if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    die("Error: Invalid email format.\\n");
+}
+
+try {
+    $db = Database::getConnection();
+
+    // Ensure role 1 exists
+    $roleCheck = $db->query("SELECT id FROM roles WHERE id = 1")->fetch();
+    if (!$roleCheck) {
+        $db->exec("INSERT INTO roles (id, name, description) VALUES (1, 'Super Admin', 'Full access to all platform records, settings, and team users')");
+    }
+
+    $hash = password_hash($pass, PASSWORD_BCRYPT, ['cost' => 12]);
+
+    $stmt = $db->prepare("SELECT id FROM admin_users WHERE email = ? LIMIT 1");
+    $stmt->execute([$email]);
+    $existing = $stmt->fetch();
+
+    if ($existing) {
+        $update = $db->prepare("UPDATE admin_users SET name = ?, password_hash = ?, role_id = 1, is_active = 1, updated_at = NOW() WHERE id = ?");
+        $update->execute([$name, $hash, $existing['id']]);
+        echo "SUCCESS: Super Admin account [{$email}] successfully updated and secured.\\n";
+    } else {
+        $insert = $db->prepare("INSERT INTO admin_users (name, email, password_hash, role_id, is_active) VALUES (?, ?, ?, 1, 1)");
+        $insert->execute([$name, $email, $hash]);
+        echo "SUCCESS: Super Admin account [{$email}] successfully created with ID: " . $db->lastInsertId() . "\\n";
+    }
+
+    // Record audit event
+    $audit = $db->prepare("INSERT INTO audit_logs (acting_user, action, record_type, record_id, details, ip_address) VALUES ('CLI Provisioner', 'Super Admin Provisioned', 'User', ?, 'Account provisioned via secure CLI tool', '127.0.0.1')");
+    $audit->execute([$email]);
+
+} catch (Exception $e) {
+    echo "Error provisioning Super Admin: " . $e->getMessage() . "\\n";
+    exit(1);
+}
+`
+    },
+    {
+      path: 'api/enquiry.php',
+      description: 'Legacy endpoint (v0): Proxies to api/v1/enquiry.php for backward compatibility',
+      content: `<?php
+require_once __DIR__ . '/v1/enquiry.php';
 `
     },
     {
       path: 'join-as-freelancer.php',
       description: 'Public freelancer 4-step registration page with Zero Joining Fee guarantee',
       content: `<?php
-require_once __DIR__ . '/config/config.php';
-require_once __DIR__ . '/config/database.php';
+$rootCandidates = [__DIR__, dirname(__DIR__), dirname(__DIR__, 2)];
+$root = '';
+foreach ($rootCandidates as $cand) {
+    if (file_exists($cand . '/config/config.php')) {
+        $root = $cand;
+        break;
+    }
+}
+if (!$root) {
+    die("System configuration error: config/config.php not found. Please verify deployment paths.");
+}
+require_once $root . '/config/config.php';
+require_once $root . '/config/database.php';
 
 $success = '';
 $error = '';
@@ -955,18 +1843,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $skills = trim($_POST['skills'] ?? 'Field Onboarding');
 
     if (empty($fullName) || empty($phone) || empty($email)) {
-        $error = 'Please fill all mandatory fields.';
+        $error = 'Please fill all mandatory fields (Name, Phone, Email).';
     } else {
+        $cleanPhone = preg_replace('/[^\d+]/', '', $phone);
+        $cleanEmail = strtolower($email);
         try {
             $db = Database::getConnection();
-            $newRef = 'WO-FL-' . rand(1000, 9999);
 
-            $stmt = $db->prepare("INSERT INTO freelancers (registration_ref, full_name, email, phone, dob, residential_address, city, state, pin_code, preferred_work_type, education, skills, preferred_role, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Degree', ?, ?, 'Submitted')");
-            $stmt->execute([$newRef, $fullName, $email, $phone, $dob, $address, $city, $state, $pin, $workType, $skills, $role]);
+            // Check duplicate (strict privacy: never leak existing registration_ref)
+            $check = $db->prepare("SELECT id FROM freelancers WHERE phone = ? OR email = ? LIMIT 1");
+            $check->execute([$cleanPhone, $cleanEmail]);
+            $existing = $check->fetch();
 
-            $success = "Registration received! Your reference ID is " . $newRef;
+            if ($existing) {
+                $error = "An application with this mobile number or email address has already been submitted. Our operations team reviews all applications within 24-48 hours.";
+            } else {
+                $newRef = 'WO-FR-' . date('Y') . '-' . str_pad((string)rand(100, 9999), 4, '0', STR_PAD_LEFT);
+
+                $stmt = $db->prepare("INSERT INTO freelancers 
+                    (registration_ref, full_name, email, phone, dob, residential_address, city, state, pin_code, is_adult, has_smartphone, languages, preferred_areas, preferred_work_type, education, skills, preferred_role, status) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 'Kannada, English', 'Indiranagar', ?, '12th Pass', ?, ?, 'Submitted')");
+                $stmt->execute([$newRef, $fullName, $cleanEmail, $cleanPhone, $dob, $address ?: 'Bangalore', $city, $state, $pin, $workType, $skills, $role]);
+
+                $success = "Registration received successfully! Your Reference ID is " . $newRef;
+            }
         } catch (Exception $e) {
-            $error = "Registration error: " . $e->getMessage();
+            error_log("Freelancer registration form error: " . $e->getMessage());
+            $error = "Unable to complete registration at this time. Please contact us directly at mail@weonboard.in.";
         }
     }
 }
@@ -1035,16 +1938,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       path: 'public/index.php',
       description: 'Preserved public homepage with live PHP database CMS integration, Inter font & complete branding',
       content: `<?php
-require_once dirname(__DIR__) . '/config/config.php';
-require_once dirname(__DIR__) . '/config/database.php';
+$rootCandidates = [__DIR__, dirname(__DIR__), dirname(__DIR__, 2)];
+$root = '';
+foreach ($rootCandidates as $cand) {
+    if (file_exists($cand . '/config/config.php')) {
+        $root = $cand;
+        break;
+    }
+}
 
-$db = Database::getConnection();
-
-// Fetch settings
-$settingsRows = $db->query("SELECT setting_key, setting_value FROM site_settings")->fetchAll();
 $settings = [];
-foreach ($settingsRows as $r) {
-    $settings[$r['setting_key']] = $r['setting_value'];
+if ($root) {
+    require_once $root . '/config/config.php';
+    if (file_exists($root . '/config/database.php')) {
+        require_once $root . '/config/database.php';
+        try {
+            $db = Database::getConnection();
+            $settingsRows = $db->query("SELECT setting_key, setting_value FROM site_settings")->fetchAll();
+            foreach ($settingsRows as $r) {
+                $settings[$r['setting_key']] = $r['setting_value'];
+            }
+        } catch (Exception $e) {
+            error_log("Site settings query notice: " . $e->getMessage());
+        }
+    }
 }
 
 $phone = $settings['phone'] ?? '+91 96111 09490';
@@ -1204,39 +2121,53 @@ img { max-width: 100%; display: block; }
 2. Go to **File Manager** -> Open **\`public_html\`**.
 3. Upload all files and folders from this zip package directly into \`public_html\`.
 
-### Step 2: Create MySQL Database
+### Step 2: Configure API Subdomain Routing in Hostinger
+1. In hPanel, navigate to **Domains** -> **Subdomains**.
+2. For subdomain **\`api.weonboard.in\`**, configure the custom folder / document root to **\`public_html/api\`**.
+3. Under this configuration:
+   - Root URL \`https://api.weonboard.in/v1/health.php\` resolves directly to \`public_html/api/v1/health.php\`.
+   - The provided \`api/.htaccess\` includes rewrite rules to ensure both \`/v1/*\` and legacy \`/api/v1/*\` work seamlessly without \`/api/api/\` duplication.
+
+### Step 3: Create MySQL Database & Import Schema
 1. In hPanel, go to **Databases** -> **MySQL Databases**.
 2. Create a new database (e.g. \`u123456789_weonboard\`).
-3. Create a new user with all privileges and save the generated password.
+3. Create a database user with ALL privileges.
+4. Open **phpMyAdmin** for that database.
+5. Click **Import** -> Select \`database/schema.sql\` from this package -> Click **Go**.
+   - All 16 tables, indexes, and initial roles will be imported cleanly.
 
-### Step 3: Configure Database Credentials
-Edit \`config/config.php\` or enter credentials directly in the installer:
+### Step 4: Configure Database Credentials
+Edit \`config/config.php\`:
 - \`DB_HOST\`: \`localhost\`
 - \`DB_NAME\`: your database name
 - \`DB_USER\`: your database username
 - \`DB_PASS\`: your database password
 
-### Step 4: Run Web Installer
-Open your browser and navigate to:
-\`\`\`
-https://yourdomain.com/install.php
-\`\`\`
-- Enter your database details.
-- Provide your initial Super Admin password.
-- Click **"Run Installation & Secure System"**.
-- The installer automatically creates all 16 tables, seeds roles, and creates \`config/install.lock\` to prevent tampering.
+### Step 5: Provision Initial Super Admin
+You can either:
+- Run the one-time web installer at: \`https://yourdomain.com/install.php\`
+- OR run the secure CLI provisioning tool via SSH:
+  \`\`\`bash
+  php scripts/create_super_admin.php "Muhammad Ali Shoaib" "admin@weonboard.in" "YourSecurePassword"
+  \`\`\`
 
-### Step 5: Access the Admin Panel
-Navigate to:
+### Step 6: Verify Deployment & Health Check
+Open your browser or run curl to test API health:
 \`\`\`
-https://yourdomain.com/admin/login.php
+https://api.weonboard.in/v1/health.php
 \`\`\`
-Log in with your created Super Admin credentials (\`admin@weonboard.in\`).
+Expected response:
+\`\`\`json
+{"status":"healthy","service":"weonboard-api","version":"1.0.0","database":"available"}
+\`\`\`
 
-## Security & Best Practices
-- Ensure PHP 8.1 or 8.2 is selected under **hPanel -> Advanced -> PHP Configuration**.
-- Enable **SSL (HTTPS)** under **Security -> SSL**.
-- All user input uses prepared PDO statements to protect against SQL injection.
+## Security & Architecture Hardening
+- **PHP Version**: PHP 8.2+ with PDO enabled.
+- **SSL**: Active for both \`weonboard.in\` and \`api.weonboard.in\`.
+- **Prepared Statements**: 100% PDO prepared statements across all endpoints.
+- **Brute Force Protection**: Rate-limited admin login (5 attempts max / 15 minutes) via \`login_attempts\` table.
+- **Session Security**: \`HttpOnly\`, \`SameSite=Lax\`, \`session_regenerate_id(true)\` on login.
+- **Audit Logging**: Every inbound enquiry, freelancer registration, MSME proposal, and login attempt is recorded in \`audit_logs\`.
 `
     }
   ];

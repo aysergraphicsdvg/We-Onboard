@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { store } from './services/store';
+import { api } from './services/api';
 
 // Public Components
 import { Header } from './components/public/Header';
@@ -55,6 +56,7 @@ export default function App() {
   // Force re-render on store changes
   const [, setTick] = useState(0);
   useEffect(() => {
+    api.getCurrentAdmin().catch(() => {});
     return store.subscribe(() => {
       setTick((t) => t + 1);
       setIsAdminLoggedIn(Boolean(store.getState().currentAdmin));
