@@ -1,0 +1,54 @@
+name: PHP API and Database Schema Check
+
+on:
+  push:
+    branches:
+      - feature/backend-foundation
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  php-lint-and-schema:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: we_onboard_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: pdo_mysql, mbstring
+          coverage: none
+      - name: Syntax check PHP entry point
+        run: php -l backend/public/index.php
+      - name: Verify required backend files exist
+        run: |
+          test -f backend/README.md
+          test -f backend/PLATFORM_BLUEPRINT.md
+          test -f backend/database/schema.sql
+          test -f backend/.env.example
+          test -f backend/public/.htaccess
+      - name: Import schema into disposable MySQL database
+        env:
+          MYSQL_PWD: root
+        run: |
+          mysql --host=127.0.0.1 --user=root we_onboard_test < backend/database/schema.sql
+          mysql --host=127.0.0.1 --user=root we_onboard_test -e "SHOW TABLES;"
