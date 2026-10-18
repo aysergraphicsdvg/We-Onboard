@@ -1,0 +1,6 @@
+{
+  "name": "We Onboard — Ground Engine for Growth & Admin Management System",
+  "description": "Enterprise platform and admin panel for We Onboard: rider and merchant onboarding, field execution, freelancer registration, MSME support, and Hostinger deployment.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
