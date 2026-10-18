@@ -341,6 +341,74 @@ async function runSuite() {
           : `Failed: expected HTTP 409 Conflict, received HTTP ${res3.status}`,
         isBlocker: false
       });
+
+      // 6c: Parallel Identical Requests Concurrency Test (Promise.all race)
+      const raceKey = `race-smoke-${Date.now()}`;
+      const racePayload = {
+        ...payloadA,
+        idempotency_key: raceKey,
+        message: '[RACE-TEST] Parallel concurrent identical submissions'
+      };
+      const [raceRes1, raceRes2] = await Promise.all([
+        fetch(`${BASE_URL}/enquiry.php`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Origin': ORIGIN_APPROVED, 'X-Idempotency-Key': raceKey },
+          body: JSON.stringify(racePayload)
+        }),
+        fetch(`${BASE_URL}/enquiry.php`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Origin': ORIGIN_APPROVED, 'X-Idempotency-Key': raceKey },
+          body: JSON.stringify(racePayload)
+        })
+      ]);
+      const [raceJson1, raceJson2] = await Promise.all([
+        raceRes1.json().catch(() => null),
+        raceRes2.json().catch(() => null)
+      ]);
+      const raceSuccess = raceRes1.status === 200 && raceRes2.status === 200 &&
+                          raceJson1?.reference_id && raceJson1.reference_id === raceJson2?.reference_id;
+      record({
+        name: 'Concurrent Parallel Submissions (Atomic Reservation & Replay)',
+        category: 'IDEMPOTENCY',
+        passed: raceSuccess,
+        status: raceRes1.status,
+        expectedStatus: 200,
+        details: raceSuccess
+          ? `Both parallel requests resolved cleanly to same reference ID (${raceJson1?.reference_id}) with zero duplicate entries`
+          : `Concurrency race failed: status1=${raceRes1.status}, status2=${raceRes2.status}, ref1=${raceJson1?.reference_id}, ref2=${raceJson2?.reference_id}`,
+        isBlocker: false
+      });
+
+      // 6d: Parallel Conflicting Payloads Concurrency Test
+      const conflictRaceKey = `conflict-race-${Date.now()}`;
+      const confPayload1 = { ...payloadA, idempotency_key: conflictRaceKey, full_name: '[RACE-1] Original Payload' };
+      const confPayload2 = { ...payloadA, idempotency_key: conflictRaceKey, full_name: '[RACE-2] Conflicting Payload' };
+      const [confRes1, confRes2] = await Promise.all([
+        fetch(`${BASE_URL}/enquiry.php`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Origin': ORIGIN_APPROVED, 'X-Idempotency-Key': conflictRaceKey },
+          body: JSON.stringify(confPayload1)
+        }),
+        fetch(`${BASE_URL}/enquiry.php`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Origin': ORIGIN_APPROVED, 'X-Idempotency-Key': conflictRaceKey },
+          body: JSON.stringify(confPayload2)
+        })
+      ]);
+      const confStatuses = [confRes1.status, confRes2.status].sort();
+      // One request should succeed (200) and the other MUST be rejected with 409 Conflict
+      const confHandled = (confStatuses[0] === 200 && confStatuses[1] === 409);
+      record({
+        name: 'Concurrent Conflicting Payload Race Rejection',
+        category: 'IDEMPOTENCY',
+        passed: confHandled,
+        status: confRes2.status,
+        expectedStatus: 409,
+        details: confHandled
+          ? `Race winner processed (200), conflicting parallel payload rejected with 409 Conflict`
+          : `Conflict race failed: received statuses [${confStatuses.join(', ')}] instead of [200, 409]`,
+        isBlocker: false
+      });
     } else if (status1 === 503) {
       record({
         name: 'Idempotency Replay & Conflict Rejection',
@@ -366,6 +434,36 @@ async function runSuite() {
       category: 'IDEMPOTENCY',
       passed: false,
       details: 'Connection error during idempotency probe',
+      error: err.message,
+      isBlocker: true
+    });
+  }
+
+  // 8. Public Web Installer Disabled Protection
+  try {
+    const installUrl = BASE_URL.replace(/\/v1$/, '').replace(/\/api$/, '') + '/install.php';
+    const res = await fetch(installUrl);
+    const status = res.status;
+    const body = await res.text();
+
+    const passed = (status === 403 || status === 404) && !body.includes('Database Initializer') && !body.includes('installer_csrf');
+    record({
+      name: 'Public Web Installer Disabled Check (/install.php)',
+      category: 'AUTH_ACCESS',
+      passed,
+      status,
+      expectedStatus: [403, 404],
+      details: passed
+        ? `Web installer correctly rejected with HTTP ${status}. Public installation disabled.`
+        : `SECURITY CRITICAL: Public web installer accessible without authorization! Status: ${status}`,
+      isBlocker: true
+    });
+  } catch (err: any) {
+    record({
+      name: 'Public Web Installer Disabled Check (/install.php)',
+      category: 'AUTH_ACCESS',
+      passed: false,
+      details: 'Network error contacting installer URL — unverified',
       error: err.message,
       isBlocker: true
     });

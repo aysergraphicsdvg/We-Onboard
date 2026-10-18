@@ -15,6 +15,7 @@ if (!$root) {
 require_once $root . '/config/config.php';
 require_once $root . '/config/cors.php';
 require_once $root . '/config/database.php';
+require_once $root . '/config/idempotency.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -78,37 +79,20 @@ $db = null;
 try {
     $db = Database::getConnection();
 
-    // 1. Strict Idempotency Check & Conflict Resolution
-    if (!empty($idempotencyKey)) {
-        if (!preg_match('/^[A-Za-z0-9_\-]{8,64}$/', $idempotencyKey)) {
-            http_response_code(400);
-            echo json_encode([
-                'success' => false,
-                'error' => 'Invalid idempotency key format. Must be 8-64 alphanumeric characters, underscores, or hyphens.'
-            ]);
-            exit;
-        }
-
-        $idemStmt = $db->prepare("SELECT endpoint, request_payload_hash, response_json FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1");
-        $idemStmt->execute([$idempotencyKey]);
-        $cached = $idemStmt->fetch(PDO::FETCH_ASSOC);
-
-        if ($cached) {
-            if ($cached['endpoint'] === $currentEndpoint && hash_equals($cached['request_payload_hash'], $currentPayloadHash)) {
-                // Legitimate idempotent replay
-                header('X-Idempotency-Hit: true');
-                echo $cached['response_json'];
-                exit;
-            } else {
-                // Key reuse conflict
-                http_response_code(409);
-                echo json_encode([
-                    'success' => false,
-                    'error' => 'Idempotency conflict: The provided idempotency key has already been used with a different endpoint or request payload.'
-                ]);
-                exit;
-            }
-        }
+    // 1. Atomic Idempotency Check & Concurrency Reservation
+    $idem = Idempotency::reserve($db, $idempotencyKey, $currentEndpoint, $currentPayloadHash);
+    if ($idem['status'] === Idempotency::STATUS_HIT) {
+        header('X-Idempotency-Hit: true');
+        echo $idem['response_json'];
+        exit;
+    } elseif ($idem['status'] === Idempotency::STATUS_CONFLICT || $idem['status'] === Idempotency::STATUS_IN_PROGRESS) {
+        http_response_code(409);
+        echo json_encode(['success' => false, 'error' => $idem['error']]);
+        exit;
+    } elseif ($idem['status'] === Idempotency::STATUS_INVALID) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => $idem['error']]);
+        exit;
     }
 
     // 2. Check duplicates on phone or email (strict privacy: NEVER leak existing registration_ref)
@@ -117,6 +101,9 @@ try {
     $existing = $checkStmt->fetch();
 
     if ($existing) {
+        if (!empty($idempotencyKey)) {
+            Idempotency::release($db, $idempotencyKey);
+        }
         http_response_code(409);
         echo json_encode([
             'success' => false,
@@ -149,16 +136,20 @@ try {
         'message' => 'Application submitted successfully under Zero Joining Fee policy. Our Bangalore team will review within 24-48 hours.'
     ]);
 
+    $db->commit();
+
+    // Commit idempotency record after successful transaction commit
     if (!empty($idempotencyKey)) {
-        $db->prepare("INSERT INTO idempotency_keys (idempotency_key, endpoint, request_payload_hash, response_json) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE id=id")
-           ->execute([$idempotencyKey, $currentEndpoint, $currentPayloadHash, $responseJson]);
+        Idempotency::commit($db, $idempotencyKey, $responseJson);
     }
 
-    $db->commit();
     echo $responseJson;
 } catch (PDOException $e) {
     if ($db && $db->inTransaction()) {
         $db->rollBack();
+    }
+    if (!empty($idempotencyKey) && $db) {
+        Idempotency::release($db, $idempotencyKey);
     }
     if ($e->getCode() === '23000' || strpos($e->getMessage(), 'Duplicate entry') !== false) {
         http_response_code(409);
@@ -171,6 +162,9 @@ try {
 } catch (Exception $e) {
     if ($db && $db->inTransaction()) {
         $db->rollBack();
+    }
+    if (!empty($idempotencyKey) && $db) {
+        Idempotency::release($db, $idempotencyKey);
     }
     error_log("Freelancer registration error: " . $e->getMessage());
     http_response_code(500);

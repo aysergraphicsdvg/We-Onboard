@@ -256,6 +256,125 @@ class Database {
 `
     },
     {
+      path: 'config/idempotency.php',
+      description: 'Concurrency-safe idempotency manager with atomic reservation, payload hashing, and race resolution',
+      content: `<?php
+/**
+ * We Onboard Concurrency-Safe Idempotency Manager
+ * 
+ * Provides atomic reservation, payload hash validation,
+ * transaction coordination, and conflict resolution across concurrent requests.
+ */
+
+class Idempotency {
+    const STATUS_RESERVED    = 'RESERVED';
+    const STATUS_HIT         = 'HIT';
+    const STATUS_CONFLICT    = 'CONFLICT';
+    const STATUS_IN_PROGRESS = 'IN_PROGRESS';
+    const STATUS_NONE        = 'NONE';
+    const STATUS_INVALID     = 'INVALID';
+
+    const PENDING_SENTINEL   = '__IDEMPOTENCY_IN_PROGRESS__';
+
+    public static function isValidKey(string $key): bool {
+        return (bool) preg_match('/^[A-Za-z0-9_\\-]{8,64}$/', $key);
+    }
+
+    public static function reserve(PDO $db, string $key, string $endpoint, string $payloadHash): array {
+        if (empty($key)) {
+            return ['status' => self::STATUS_NONE, 'response_json' => null, 'error' => null];
+        }
+
+        if (!self::isValidKey($key)) {
+            return [
+                'status' => self::STATUS_INVALID,
+                'response_json' => null,
+                'error' => 'Invalid idempotency key format. Must be 8-64 alphanumeric characters, underscores, or hyphens.'
+            ];
+        }
+
+        $stmt = $db->prepare("SELECT endpoint, request_payload_hash, response_json FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1");
+        $stmt->execute([$key]);
+        $existing = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($existing) {
+            return self::resolveExisting($db, $existing, $key, $endpoint, $payloadHash);
+        }
+
+        try {
+            $insert = $db->prepare("INSERT INTO idempotency_keys (idempotency_key, endpoint, request_payload_hash, response_json) VALUES (?, ?, ?, ?)");
+            $insert->execute([$key, $endpoint, $payloadHash, self::PENDING_SENTINEL]);
+            return ['status' => self::STATUS_RESERVED, 'response_json' => null, 'error' => null];
+        } catch (PDOException $e) {
+            if ($e->getCode() === '23000' || strpos($e->getMessage(), 'Duplicate entry') !== false) {
+                $stmt = $db->prepare("SELECT endpoint, request_payload_hash, response_json FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1");
+                $stmt->execute([$key]);
+                $raceWinner = $stmt->fetch(PDO::FETCH_ASSOC);
+                if ($raceWinner) {
+                    return self::resolveExisting($db, $raceWinner, $key, $endpoint, $payloadHash);
+                }
+            }
+            throw $e;
+        }
+    }
+
+    private static function resolveExisting(PDO $db, array $record, string $key, string $endpoint, string $payloadHash): array {
+        if ($record['endpoint'] !== $endpoint || !hash_equals($record['request_payload_hash'], $payloadHash)) {
+            return [
+                'status' => self::STATUS_CONFLICT,
+                'response_json' => null,
+                'error' => 'Idempotency conflict: The provided idempotency key has already been used with a different endpoint or request payload.'
+            ];
+        }
+
+        if ($record['response_json'] !== self::PENDING_SENTINEL) {
+            return [
+                'status' => self::STATUS_HIT,
+                'response_json' => $record['response_json'],
+                'error' => null
+            ];
+        }
+
+        for ($i = 0; $i < 15; $i++) {
+            usleep(100000); // 100ms
+            $check = $db->prepare("SELECT response_json FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1");
+            $check->execute([$key]);
+            $updated = $check->fetchColumn();
+            if ($updated && $updated !== self::PENDING_SENTINEL) {
+                return [
+                    'status' => self::STATUS_HIT,
+                    'response_json' => $updated,
+                    'error' => null
+                ];
+            }
+        }
+
+        return [
+            'status' => self::STATUS_IN_PROGRESS,
+            'response_json' => null,
+            'error' => 'A request with this idempotency key is currently being processed. Please retry shortly.'
+        ];
+    }
+
+    public static function commit(PDO $db, string $key, string $responseJson): void {
+        if (empty($key)) return;
+        $stmt = $db->prepare("UPDATE idempotency_keys SET response_json = ? WHERE idempotency_key = ?");
+        $stmt->execute([$responseJson, $key]);
+    }
+
+    public static function release(PDO $db, string $key): void {
+        if (empty($key)) return;
+        try {
+            $stmt = $db->prepare("DELETE FROM idempotency_keys WHERE idempotency_key = ? AND response_json = ?");
+            $stmt->execute([$key, self::PENDING_SENTINEL]);
+        } catch (Exception $e) {
+            error_log("[Idempotency Release Error] " . $e->getMessage());
+        }
+    }
+}
+`
+    },
+    {
       path: 'database/schema.sql',
       description: 'Complete MySQL/MariaDB InnoDB schema with all 17 tables, constraints and initial seed',
       content: `-- We Onboard Master Database Schema
@@ -630,13 +749,21 @@ if (!$isCli) {
         die("<!DOCTYPE html><html><head><title>Access Denied</title></head><body style='font-family:sans-serif;padding:40px;line-height:1.6;'><h2 style='color:#b91c1c;'>Web Installation Disabled</h2><p>For security, web-based installation is disabled in production. Please run the installer via SSH / CLI:</p><pre style='background:#f1f5f9;padding:12px;border-radius:6px;'>php scripts/install.php</pre><p>Or provision an administrator via:</p><pre style='background:#f1f5f9;padding:12px;border-radius:6px;'>php scripts/create_super_admin.php \\\"Admin Name\\\" \\\"admin@weonboard.in\\\" \\\"StrongPassword\\\"</pre></body></html>");
     }
 
-    $requiredKey = getenv('INSTALL_KEY') ?: 'setup-authorized-token';
+    // Require explicit, strong server-side installation key (min 16 chars)
+    $requiredKey = getenv('INSTALL_KEY') ?: ($_ENV['INSTALL_KEY'] ?? ($_SERVER['INSTALL_KEY'] ?? ''));
+    if (empty($requiredKey) || strlen(trim($requiredKey)) < 16) {
+        http_response_code(403);
+        error_log("[SECURITY ERROR] Web installation attempted, but INSTALL_KEY is missing or too short (minimum 16 characters required). Failing closed.");
+        die("<!DOCTYPE html><html><head><title>Installer Disabled</title></head><body style='font-family:sans-serif;padding:40px;'><h2 style='color:#b91c1c;'>Installer Configuration Error</h2><p>Web installation requires an explicitly configured, strong server installation key (minimum 16 characters). Please configure <code>INSTALL_KEY</code> in server environment variables or execute installation via CLI.</p></body></html>");
+    }
+
     $providedKey = $_GET['key'] ?? ($_POST['install_key'] ?? '');
     if (empty($providedKey) || !hash_equals($requiredKey, $providedKey)) {
         http_response_code(403);
-        die("<!DOCTYPE html><html><head><title>Installer Authorization Required</title></head><body style='font-family:sans-serif;padding:40px;'><h2 style='color:#b91c1c;'>Installer Authorization Required</h2><p>Provide the authorization key via <code>?key=...</code> to access this temporary non-production installer.</p></body></html>");
+        die("<!DOCTYPE html><html><head><title>Access Denied</title></head><body style='font-family:sans-serif;padding:40px;'><h2 style='color:#b91c1c;'>Installer Authorization Failed</h2><p>Invalid or missing authorization key. Access denied.</p></body></html>");
     }
 
+    // Ensure CSRF token for web installer
     if (empty($_SESSION['installer_csrf'])) {
         $_SESSION['installer_csrf'] = bin2hex(random_bytes(32));
     }
@@ -1341,6 +1468,7 @@ if (!$root) {
 require_once $root . '/config/config.php';
 require_once $root . '/config/cors.php';
 require_once $root . '/config/database.php';
+require_once $root . '/config/idempotency.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -1398,35 +1526,20 @@ $db = null;
 try {
     $db = Database::getConnection();
 
-    // 1. Strict Idempotency Check & Conflict Resolution
-    if (!empty($idempotencyKey)) {
-        if (!preg_match('/^[A-Za-z0-9_\\-]{8,64}$/', $idempotencyKey)) {
-            http_response_code(400);
-            echo json_encode([
-                'success' => false,
-                'error' => 'Invalid idempotency key format. Must be 8-64 alphanumeric characters, underscores, or hyphens.'
-            ]);
-            exit;
-        }
-
-        $idemStmt = $db->prepare("SELECT endpoint, request_payload_hash, response_json FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1");
-        $idemStmt->execute([$idempotencyKey]);
-        $cached = $idemStmt->fetch(PDO::FETCH_ASSOC);
-
-        if ($cached) {
-            if ($cached['endpoint'] === $currentEndpoint && hash_equals($cached['request_payload_hash'], $currentPayloadHash)) {
-                header('X-Idempotency-Hit: true');
-                echo $cached['response_json'];
-                exit;
-            } else {
-                http_response_code(409);
-                echo json_encode([
-                    'success' => false,
-                    'error' => 'Idempotency conflict: The provided idempotency key has already been used with a different endpoint or request payload.'
-                ]);
-                exit;
-            }
-        }
+    // 1. Atomic Idempotency Check & Concurrency Reservation
+    $idem = Idempotency::reserve($db, $idempotencyKey, $currentEndpoint, $currentPayloadHash);
+    if ($idem['status'] === Idempotency::STATUS_HIT) {
+        header('X-Idempotency-Hit: true');
+        echo $idem['response_json'];
+        exit;
+    } elseif ($idem['status'] === Idempotency::STATUS_CONFLICT || $idem['status'] === Idempotency::STATUS_IN_PROGRESS) {
+        http_response_code(409);
+        echo json_encode(['success' => false, 'error' => $idem['error']]);
+        exit;
+    } elseif ($idem['status'] === Idempotency::STATUS_INVALID) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => $idem['error']]);
+        exit;
     }
 
     // 2. Prevent immediate duplicate submissions (within last 2 minutes by same phone)
@@ -1434,11 +1547,15 @@ try {
     $dupCheck->execute([$cleanPhone]);
     $existing = $dupCheck->fetch();
     if ($existing) {
-        echo json_encode([
+        $dupResponse = json_encode([
             'success' => true,
             'reference_id' => $existing['enquiry_ref'],
             'message' => 'Thank you! Your enquiry has already been received. Our operations team in Bangalore will contact you shortly.'
         ]);
+        if (!empty($idempotencyKey)) {
+            Idempotency::commit($db, $idempotencyKey, $dupResponse);
+        }
+        echo $dupResponse;
         exit;
     }
 
@@ -1461,16 +1578,20 @@ try {
         'message' => 'Thank you! Your enquiry has been received. Our operations team in Bangalore will contact you shortly.'
     ]);
 
+    $db->commit();
+
+    // Commit idempotency record after successful transaction commit
     if (!empty($idempotencyKey)) {
-        $db->prepare("INSERT INTO idempotency_keys (idempotency_key, endpoint, request_payload_hash, response_json) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE id=id")
-           ->execute([$idempotencyKey, $currentEndpoint, $currentPayloadHash, $responseJson]);
+        Idempotency::commit($db, $idempotencyKey, $responseJson);
     }
 
-    $db->commit();
     echo $responseJson;
 } catch (Exception $e) {
     if ($db && $db->inTransaction()) {
         $db->rollBack();
+    }
+    if (!empty($idempotencyKey) && $db) {
+        Idempotency::release($db, $idempotencyKey);
     }
     error_log("Enquiry submission error: " . $e->getMessage());
     http_response_code(500);
@@ -1498,6 +1619,7 @@ if (!$root) {
 require_once $root . '/config/config.php';
 require_once $root . '/config/cors.php';
 require_once $root . '/config/database.php';
+require_once $root . '/config/idempotency.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -1561,35 +1683,20 @@ $db = null;
 try {
     $db = Database::getConnection();
 
-    // 1. Strict Idempotency Check & Conflict Resolution
-    if (!empty($idempotencyKey)) {
-        if (!preg_match('/^[A-Za-z0-9_\\-]{8,64}$/', $idempotencyKey)) {
-            http_response_code(400);
-            echo json_encode([
-                'success' => false,
-                'error' => 'Invalid idempotency key format. Must be 8-64 alphanumeric characters, underscores, or hyphens.'
-            ]);
-            exit;
-        }
-
-        $idemStmt = $db->prepare("SELECT endpoint, request_payload_hash, response_json FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1");
-        $idemStmt->execute([$idempotencyKey]);
-        $cached = $idemStmt->fetch(PDO::FETCH_ASSOC);
-
-        if ($cached) {
-            if ($cached['endpoint'] === $currentEndpoint && hash_equals($cached['request_payload_hash'], $currentPayloadHash)) {
-                header('X-Idempotency-Hit: true');
-                echo $cached['response_json'];
-                exit;
-            } else {
-                http_response_code(409);
-                echo json_encode([
-                    'success' => false,
-                    'error' => 'Idempotency conflict: The provided idempotency key has already been used with a different endpoint or request payload.'
-                ]);
-                exit;
-            }
-        }
+    // 1. Atomic Idempotency Check & Concurrency Reservation
+    $idem = Idempotency::reserve($db, $idempotencyKey, $currentEndpoint, $currentPayloadHash);
+    if ($idem['status'] === Idempotency::STATUS_HIT) {
+        header('X-Idempotency-Hit: true');
+        echo $idem['response_json'];
+        exit;
+    } elseif ($idem['status'] === Idempotency::STATUS_CONFLICT || $idem['status'] === Idempotency::STATUS_IN_PROGRESS) {
+        http_response_code(409);
+        echo json_encode(['success' => false, 'error' => $idem['error']]);
+        exit;
+    } elseif ($idem['status'] === Idempotency::STATUS_INVALID) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => $idem['error']]);
+        exit;
     }
 
     // 2. Check duplicates on phone or email (strict privacy: NEVER leak existing registration_ref)
@@ -1598,6 +1705,9 @@ try {
     $existing = $checkStmt->fetch();
 
     if ($existing) {
+        if (!empty($idempotencyKey)) {
+            Idempotency::release($db, $idempotencyKey);
+        }
         http_response_code(409);
         echo json_encode([
             'success' => false,
@@ -1630,16 +1740,20 @@ try {
         'message' => 'Application submitted successfully under Zero Joining Fee policy. Our Bangalore team will review within 24-48 hours.'
     ]);
 
+    $db->commit();
+
+    // Commit idempotency record after successful transaction commit
     if (!empty($idempotencyKey)) {
-        $db->prepare("INSERT INTO idempotency_keys (idempotency_key, endpoint, request_payload_hash, response_json) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE id=id")
-           ->execute([$idempotencyKey, $currentEndpoint, $currentPayloadHash, $responseJson]);
+        Idempotency::commit($db, $idempotencyKey, $responseJson);
     }
 
-    $db->commit();
     echo $responseJson;
 } catch (PDOException $e) {
     if ($db && $db->inTransaction()) {
         $db->rollBack();
+    }
+    if (!empty($idempotencyKey) && $db) {
+        Idempotency::release($db, $idempotencyKey);
     }
     if ($e->getCode() === '23000' || strpos($e->getMessage(), 'Duplicate entry') !== false) {
         http_response_code(409);
@@ -1652,6 +1766,9 @@ try {
 } catch (Exception $e) {
     if ($db && $db->inTransaction()) {
         $db->rollBack();
+    }
+    if (!empty($idempotencyKey) && $db) {
+        Idempotency::release($db, $idempotencyKey);
     }
     error_log("Freelancer registration error: " . $e->getMessage());
     http_response_code(500);
@@ -1679,6 +1796,7 @@ if (!$root) {
 require_once $root . '/config/config.php';
 require_once $root . '/config/cors.php';
 require_once $root . '/config/database.php';
+require_once $root . '/config/idempotency.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -1719,35 +1837,20 @@ $db = null;
 try {
     $db = Database::getConnection();
 
-    // 1. Strict Idempotency Check & Conflict Resolution
-    if (!empty($idempotencyKey)) {
-        if (!preg_match('/^[A-Za-z0-9_\\-]{8,64}$/', $idempotencyKey)) {
-            http_response_code(400);
-            echo json_encode([
-                'success' => false,
-                'error' => 'Invalid idempotency key format. Must be 8-64 alphanumeric characters, underscores, or hyphens.'
-            ]);
-            exit;
-        }
-
-        $idemStmt = $db->prepare("SELECT endpoint, request_payload_hash, response_json FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1");
-        $idemStmt->execute([$idempotencyKey]);
-        $cached = $idemStmt->fetch(PDO::FETCH_ASSOC);
-
-        if ($cached) {
-            if ($cached['endpoint'] === $currentEndpoint && hash_equals($cached['request_payload_hash'], $currentPayloadHash)) {
-                header('X-Idempotency-Hit: true');
-                echo $cached['response_json'];
-                exit;
-            } else {
-                http_response_code(409);
-                echo json_encode([
-                    'success' => false,
-                    'error' => 'Idempotency conflict: The provided idempotency key has already been used with a different endpoint or request payload.'
-                ]);
-                exit;
-            }
-        }
+    // 1. Atomic Idempotency Check & Concurrency Reservation
+    $idem = Idempotency::reserve($db, $idempotencyKey, $currentEndpoint, $currentPayloadHash);
+    if ($idem['status'] === Idempotency::STATUS_HIT) {
+        header('X-Idempotency-Hit: true');
+        echo $idem['response_json'];
+        exit;
+    } elseif ($idem['status'] === Idempotency::STATUS_CONFLICT || $idem['status'] === Idempotency::STATUS_IN_PROGRESS) {
+        http_response_code(409);
+        echo json_encode(['success' => false, 'error' => $idem['error']]);
+        exit;
+    } elseif ($idem['status'] === Idempotency::STATUS_INVALID) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => $idem['error']]);
+        exit;
     }
 
     // 2. Prevent immediate duplicate submissions (within 5 minutes by same phone)
@@ -1755,11 +1858,15 @@ try {
     $dupCheck->execute([$cleanPhone]);
     $existing = $dupCheck->fetch();
     if ($existing) {
-        echo json_encode([
+        $dupResponse = json_encode([
             'success' => true,
             'reference_id' => $existing['request_ref'],
             'message' => 'Department proposal already recorded under reference ' . $existing['request_ref'] . '. Our State Operations Director will connect shortly.'
         ]);
+        if (!empty($idempotencyKey)) {
+            Idempotency::commit($db, $idempotencyKey, $dupResponse);
+        }
+        echo $dupResponse;
         exit;
     }
 
@@ -1779,16 +1886,20 @@ try {
         'message' => 'Department proposal received. Our State Operations Director will connect shortly.'
     ]);
 
+    $db->commit();
+
+    // Commit idempotency record after successful transaction commit
     if (!empty($idempotencyKey)) {
-        $db->prepare("INSERT INTO idempotency_keys (idempotency_key, endpoint, request_payload_hash, response_json) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE id=id")
-           ->execute([$idempotencyKey, $currentEndpoint, $currentPayloadHash, $responseJson]);
+        Idempotency::commit($db, $idempotencyKey, $responseJson);
     }
 
-    $db->commit();
     echo $responseJson;
 } catch (Exception $e) {
     if ($db && $db->inTransaction()) {
         $db->rollBack();
+    }
+    if (!empty($idempotencyKey) && $db) {
+        Idempotency::release($db, $idempotencyKey);
     }
     error_log("MSME request error: " . $e->getMessage());
     http_response_code(500);

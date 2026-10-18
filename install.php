@@ -30,12 +30,18 @@ if (!$isCli) {
         die("<!DOCTYPE html><html><head><title>Access Denied</title></head><body style='font-family:sans-serif;padding:40px;line-height:1.6;'><h2 style='color:#b91c1c;'>Web Installation Disabled</h2><p>For security, web-based installation is disabled in production. Please run the installer via SSH / CLI:</p><pre style='background:#f1f5f9;padding:12px;border-radius:6px;'>php scripts/install.php</pre><p>Or provision an administrator via:</p><pre style='background:#f1f5f9;padding:12px;border-radius:6px;'>php scripts/create_super_admin.php \"Admin Name\" \"admin@weonboard.in\" \"StrongPassword\"</pre></body></html>");
     }
 
-    // Require one-time install authorization token via GET parameter ?key=...
-    $requiredKey = getenv('INSTALL_KEY') ?: 'setup-authorized-token';
+    // Require explicit, strong server-side installation key (min 16 chars)
+    $requiredKey = getenv('INSTALL_KEY') ?: ($_ENV['INSTALL_KEY'] ?? ($_SERVER['INSTALL_KEY'] ?? ''));
+    if (empty($requiredKey) || strlen(trim($requiredKey)) < 16) {
+        http_response_code(403);
+        error_log("[SECURITY ERROR] Web installation attempted, but INSTALL_KEY is missing or too short (minimum 16 characters required). Failing closed.");
+        die("<!DOCTYPE html><html><head><title>Installer Disabled</title></head><body style='font-family:sans-serif;padding:40px;'><h2 style='color:#b91c1c;'>Installer Configuration Error</h2><p>Web installation requires an explicitly configured, strong server installation key (minimum 16 characters). Please configure <code>INSTALL_KEY</code> in server environment variables or execute installation via CLI.</p></body></html>");
+    }
+
     $providedKey = $_GET['key'] ?? ($_POST['install_key'] ?? '');
     if (empty($providedKey) || !hash_equals($requiredKey, $providedKey)) {
         http_response_code(403);
-        die("<!DOCTYPE html><html><head><title>Installer Authorization Required</title></head><body style='font-family:sans-serif;padding:40px;'><h2 style='color:#b91c1c;'>Installer Authorization Required</h2><p>Provide the authorization key via <code>?key=...</code> to access this temporary non-production installer.</p></body></html>");
+        die("<!DOCTYPE html><html><head><title>Access Denied</title></head><body style='font-family:sans-serif;padding:40px;'><h2 style='color:#b91c1c;'>Installer Authorization Failed</h2><p>Invalid or missing authorization key. Access denied.</p></body></html>");
     }
 
     // Ensure CSRF token for web installer
