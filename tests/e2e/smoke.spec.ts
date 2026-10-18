@@ -47,3 +47,14 @@ test('mobile homepage has no horizontal page overflow', async ({ page, isMobile 
   }));
   expect(dimensions.documentWidth).toBeLessThanOrEqual(dimensions.viewportWidth + 1);
 });
+
+test('contact enquiry shows a confirmation for dummy data', async ({ page }) => {
+  await page.goto('./');
+  const contact = page.locator('#contact');
+  await contact.getByPlaceholder('Your full name').fill('Playwright Test User');
+  await contact.getByPlaceholder('+91 98450 XXXXX').fill('9999999999');
+  await contact.getByPlaceholder('you@company.in').fill('playwright@example.test');
+  await contact.getByRole('button', { name: 'Submit Enquiry to Database' }).click();
+  await expect(contact.getByRole('heading', { name: 'Enquiry Recorded Successfully!' })).toBeVisible();
+  await expect(contact.getByText(/WO-ENQ-/)).toBeVisible();
+});
