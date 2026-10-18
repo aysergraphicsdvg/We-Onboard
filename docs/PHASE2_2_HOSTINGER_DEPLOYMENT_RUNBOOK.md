@@ -86,23 +86,35 @@ Every SQL statement in `database/schema.sql` and `database/migrations/` was audi
 - **`ALTER TABLE ... DROP COLUMN`:** None present.
 - **Foreign Keys:** Use `ON DELETE SET NULL` or `ON DELETE CASCADE` appropriately for relational integrity.
 
-### 4.3 Migration Status Determination
-Run this diagnostic query in phpMyAdmin to determine the current database state:
+### 4.3 Migration Status Determination (Table- and Column-Specific Inspection)
+Do NOT assume a migration state based on table count alone (since custom tables or different partial states could yield the same count). Instead, run specific presence queries in phpMyAdmin:
 
+#### Query 1: Verify Core & Security Tables
 ```sql
 SELECT table_name 
 FROM information_schema.tables 
 WHERE table_schema = DATABASE() 
-ORDER BY table_name;
+  AND table_name IN ('login_attempts', 'idempotency_keys', 'audit_logs', 'site_settings');
 ```
 
-**Evaluation Logic:**
-- **Case A: 0 Tables exist**  
-  Execute `database/schema.sql` in full.
-- **Case B: 15 Tables exist (missing `login_attempts` and `idempotency_keys`)**  
-  Execute `database/migrations/001_upgrade_v2.sql`, then execute:
+#### Query 2: Verify CMS Key-Value Settings
+```sql
+SELECT setting_key, setting_value 
+FROM site_settings 
+WHERE setting_key IN ('headerLogoUrl', 'footerLogoUrl');
+```
+
+#### Query 3: Verify Critical Performance & Foreign Key Indexes
+```sql
+SHOW INDEX FROM audit_logs WHERE Key_name = 'idx_audit_time';
+SHOW INDEX FROM enquiries WHERE Key_name = 'idx_converted_client';
+```
+
+**Targeted Action Matrix:**
+- **If database has no tables:** Execute `database/schema.sql` directly. All 17 tables, indexes, constraints, and initial roles will be instantiated in one step.
+- **If `site_settings` is missing `headerLogoUrl` or `footerLogoUrl`:** Execute `database/migrations/001_upgrade_v2.sql`. It uses `ON DUPLICATE KEY UPDATE` and will not disrupt existing values.
+- **If `login_attempts` is missing:** Execute the table creation statement:
   ```sql
-  -- Add table 16: login_attempts
   CREATE TABLE IF NOT EXISTS `login_attempts` (
       `id` INT AUTO_INCREMENT PRIMARY KEY,
       `ip_address` VARCHAR(45) NOT NULL,
@@ -112,11 +124,8 @@ ORDER BY table_name;
       INDEX idx_email_time (`email`, `attempt_time`)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
   ```
-  Then execute `database/migrations/002_idempotency_and_constraints.sql`.
-- **Case C: 16 Tables exist (missing `idempotency_keys`)**  
-  Execute `database/migrations/002_idempotency_and_constraints.sql`.
-- **Case D: 17 Tables exist**  
-  Database is completely up to date. No migration execution required.
+- **If `idempotency_keys` is missing:** Execute `database/migrations/002_idempotency_and_constraints.sql`. This adds the deduplication table and index without touching existing enquiry, candidate, or client records.
+- **If all 17 tables, indexes, and settings exist:** Schema is 100% current. No migrations should be executed.
 
 ---
 
@@ -174,12 +183,24 @@ define('DB_PASS', 'YOUR_ACTUAL_STRONG_DB_PASSWORD');
 ```
 *Note: Never commit actual passwords to git or public repositories.*
 
-### Step 5.4: Provision Super Administrator Account
-Connect via Hostinger SSH terminal and execute:
-```bash
-php scripts/create_super_admin.php "Muhammad Ali Shoaib" "admin@weonboard.in" "YOUR_STRONG_PASSWORD"
-```
-Or execute `https://weonboard.in/install.php` once in the browser and verify that `config/install.lock` is created.
+### Step 5.4: Provision Super Administrator Account & Lock Web Installer
+You can provision the initial Super Admin account using either of two methods:
+
+- **Method A: Primary & Secure (SSH CLI Provisioner — Recommended):**
+  Connect via Hostinger SSH terminal and execute:
+  ```bash
+  php scripts/create_super_admin.php "Muhammad Ali Shoaib" "admin@weonboard.in" "YOUR_STRONG_PASSWORD"
+  ```
+  *Security Note:* `scripts/create_super_admin.php` is strictly restricted to CLI execution (`php_sapi_name() === 'cli'`). Direct web requests receive HTTP 403.
+  **Immediately lock or remove the web installer** to ensure no public user can trigger `install.php`:
+  ```bash
+  touch config/install.lock
+  # or remove the file: rm install.php
+  ```
+
+- **Method B: Alternate (One-Time Web Installer):**
+  If SSH is not available, navigate to `https://weonboard.in/install.php` in your browser. Enter your database credentials and set an initial administrator password (minimum 8 characters).
+  *Security Note:* `install.php` does NOT contain any hardcoded default password. Upon successful completion, it automatically creates `config/install.lock`. Any subsequent request to `install.php` will be permanently blocked (`Installation Completed: system is locked`).
 
 ---
 

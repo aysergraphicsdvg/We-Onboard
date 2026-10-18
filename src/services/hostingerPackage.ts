@@ -207,7 +207,7 @@ class Database {
     },
     {
       path: 'database/schema.sql',
-      description: 'Complete MySQL/MariaDB InnoDB schema with all 16 tables, constraints and initial seed',
+      description: 'Complete MySQL/MariaDB InnoDB schema with all 17 tables, constraints and initial seed',
       content: `-- We Onboard Master Database Schema
 -- Compatible with Hostinger MySQL 5.7+ / MariaDB 10.4+ (InnoDB, utf8mb4)
 
@@ -1303,6 +1303,7 @@ $salesExp = !empty($data['sales_field_experience']) ? 1 : 0;
 $skills = is_array($data['skills'] ?? null) ? implode(', ', $data['skills']) : ($data['skills'] ?? 'Field Operations');
 $preferredRole = trim($data['preferred_role'] ?? 'Rider / Delivery Partner');
 $prevEmployer = trim($data['previous_employer'] ?? '');
+$idempotencyKey = trim($_SERVER['HTTP_X_IDEMPOTENCY_KEY'] ?? ($data['idempotency_key'] ?? ''));
 
 $cleanPhone = preg_replace('/[^\d+]/', '', $phone);
 $digits = preg_replace('/\D/', '', $cleanPhone);
@@ -1329,7 +1330,18 @@ $db = null;
 try {
     $db = Database::getConnection();
 
-    // Check duplicates on phone or email (strict privacy: NEVER leak existing registration_ref)
+    // 1. Idempotency Check
+    if (!empty($idempotencyKey)) {
+        $idemStmt = $db->prepare("SELECT response_json FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1");
+        $idemStmt->execute([$idempotencyKey]);
+        $cached = $idemStmt->fetchColumn();
+        if ($cached) {
+            echo $cached;
+            exit;
+        }
+    }
+
+    // 2. Check duplicates on phone or email (strict privacy: NEVER leak existing registration_ref)
     $checkStmt = $db->prepare("SELECT id FROM freelancers WHERE phone = ? OR email = ? LIMIT 1");
     $checkStmt->execute([$cleanPhone, $email]);
     $existing = $checkStmt->fetch();
@@ -1361,20 +1373,26 @@ try {
     $auditStmt = $db->prepare("INSERT INTO audit_logs (acting_user, action, record_type, record_id, details, ip_address) VALUES (?, ?, ?, ?, ?, ?)");
     $auditStmt->execute(['Public Candidate', 'Freelancer Registration Submitted', 'Freelancer', $ref, "{$fullName} registered for {$preferredRole} in {$city}", $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1']);
 
-    $db->commit();
-
-    echo json_encode([
+    $responseJson = json_encode([
         'success' => true,
         'reference_id' => $ref,
         'message' => 'Application submitted successfully under Zero Joining Fee policy. Our Bangalore team will review within 24-48 hours.'
     ]);
+
+    if (!empty($idempotencyKey)) {
+        $db->prepare("INSERT IGNORE INTO idempotency_keys (idempotency_key, endpoint, request_payload_hash, response_json) VALUES (?, ?, ?, ?)")
+           ->execute([$idempotencyKey, 'freelancer_register', hash('sha256', $rawInput), $responseJson]);
+    }
+
+    $db->commit();
+    echo $responseJson;
 } catch (PDOException $e) {
     if ($db && $db->inTransaction()) {
         $db->rollBack();
     }
     if ($e->getCode() === '23000' || strpos($e->getMessage(), 'Duplicate entry') !== false) {
         http_response_code(409);
-        echo json_encode(['success' => false, 'error' => 'A registration with this phone number or email already exists in our system.']);
+        echo json_encode(['success' => false, 'error' => 'An application with this mobile number or email address has already been submitted.']);
         exit;
     }
     error_log("Freelancer registration error: " . $e->getMessage());
@@ -1800,6 +1818,92 @@ try {
 `
     },
     {
+      path: 'scripts/hostinger_smoke_test.sh',
+      description: 'Hostinger SSH / Shell automated smoke test suite for live verification',
+      content: `#!/usr/bin/env bash
+# ==============================================================================
+# WE ONBOARD — Hostinger SSH & Shell Smoke Test Suite
+# ==============================================================================
+# Usage:
+#   chmod +x scripts/hostinger_smoke_test.sh
+#   ./scripts/hostinger_smoke_test.sh
+# ==============================================================================
+
+set -u
+API_BASE="\${API_BASE:-https://api.weonboard.in/v1}"
+ORIGIN_APPROVED="https://weonboard.in"
+ORIGIN_UNAPPROVED="https://malicious-test-origin.org"
+
+echo "=========================================================="
+echo "WE ONBOARD — HOSTINGER LIVE SMOKE TEST SUITE"
+echo "Target Base URL: \${API_BASE}"
+echo "Timestamp: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+echo "=========================================================="
+
+PASSED=0
+FAILED=0
+
+run_check() {
+    local name="$1"
+    local expected_code="$2"
+    local actual_code="$3"
+    local notes="$4"
+
+    if [[ "$actual_code" =~ $expected_code ]]; then
+        echo -e "[PASS] \${name} (HTTP \${actual_code}) — \${notes}"
+        ((PASSED++))
+    else
+        echo -e "[FAIL] \${name} (Expected: \${expected_code}, Got: \${actual_code}) — \${notes}"
+        ((FAILED++))
+    fi
+}
+
+# 1. Health Probe
+echo "1. Probing GET \${API_BASE}/health.php..."
+HEALTH_STATUS=$(curl -s -o /tmp/health_body.json -w "%{http_code}" "\${API_BASE}/health.php")
+run_check "Health Probe" "(200|503)" "$HEALTH_STATUS" "$(cat /tmp/health_body.json 2>/dev/null | cut -c 1-80)"
+
+# 2. CORS Preflight - Approved Origin
+echo "2. Testing CORS preflight from \${ORIGIN_APPROVED}..."
+CORS_RES=$(curl -s -i -X OPTIONS "\${API_BASE}/health.php" \\
+  -H "Origin: \${ORIGIN_APPROVED}" \\
+  -H "Access-Control-Request-Method: GET" \\
+  -H "Access-Control-Request-Headers: Content-Type, X-Idempotency-Key")
+CORS_CODE=$(echo "$CORS_RES" | grep -i "^HTTP" | awk '{print $2}')
+CORS_ALLOW_ORIGIN=$(echo "$CORS_RES" | grep -i "^access-control-allow-origin:" | tr -d '\\r' | awk '{print $2}')
+
+if [[ "$CORS_ALLOW_ORIGIN" == "$ORIGIN_APPROVED" ]]; then
+    run_check "CORS Approved Origin" "(200|204)" "$CORS_CODE" "Access-Control-Allow-Origin: \${CORS_ALLOW_ORIGIN}"
+else
+    run_check "CORS Approved Origin" "204" "$CORS_CODE" "Origin mismatch or missing header"
+fi
+
+# 3. Unauthenticated Rejection
+echo "3. Probing protected endpoint without session..."
+AUTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" "\${API_BASE}/auth/me.php")
+run_check "Unauthenticated Access Rejection" "401" "$AUTH_CODE" "Expected HTTP 401 Unauthorized"
+
+# 4. Bad Credentials Rejection
+echo "4. Testing invalid credentials at \${API_BASE}/auth/login.php..."
+LOGIN_CODE=$(curl -s -o /tmp/login_res.json -w "%{http_code}" -X POST "\${API_BASE}/auth/login.php" \\
+  -H "Content-Type: application/json" \\
+  -H "Origin: \${ORIGIN_APPROVED}" \\
+  -d '{"email":"synthetic-bad-user@weonboard.in","password":"WrongPassword123!"}')
+run_check "Invalid Credentials Rejection" "401" "$LOGIN_CODE" "Generic error returned"
+
+# 5. Direct Configuration File Download Block
+echo "5. Testing Apache protection on config.php..."
+ROOT_URL="\${API_BASE%/v1}"
+CONFIG_CODE=$(curl -s -o /dev/null -w "%{http_code}" "\${ROOT_URL}/config/config.php")
+run_check "Protected File Blocking (/config/config.php)" "(403|404)" "$CONFIG_CODE" "PHP source not leaked"
+
+echo ""
+echo "=========================================================="
+echo "TEST RESULTS: \${PASSED} Passed | \${FAILED} Failed"
+echo "=========================================================="
+`
+    },
+    {
       path: 'api/enquiry.php',
       description: 'Legacy endpoint (v0): Proxies to api/v1/enquiry.php for backward compatibility',
       content: `<?php
@@ -2134,7 +2238,7 @@ img { max-width: 100%; display: block; }
 3. Create a database user with ALL privileges.
 4. Open **phpMyAdmin** for that database.
 5. Click **Import** -> Select \`database/schema.sql\` from this package -> Click **Go**.
-   - All 16 tables, indexes, and initial roles will be imported cleanly.
+   - All 17 tables, indexes, constraints, and initial roles will be imported cleanly.
 
 ### Step 4: Configure Database Credentials
 Edit \`config/config.php\`:
@@ -2144,22 +2248,34 @@ Edit \`config/config.php\`:
 - \`DB_PASS\`: your database password
 
 ### Step 5: Provision Initial Super Admin
-You can either:
-- Run the one-time web installer at: \`https://yourdomain.com/install.php\`
-- OR run the secure CLI provisioning tool via SSH:
+You can provision the administrator account using either method:
+- **Primary & Recommended (CLI via SSH):**
+  Connect via Hostinger SSH terminal and run:
   \`\`\`bash
   php scripts/create_super_admin.php "Muhammad Ali Shoaib" "admin@weonboard.in" "YourSecurePassword"
   \`\`\`
+  Then immediately lock or remove the web installer:
+  \`\`\`bash
+  touch config/install.lock
+  # or: rm install.php
+  \`\`\`
+- **Alternate (One-Time Web Installer):**
+  Navigate to \`https://weonboard.in/install.php\` in your browser. Enter your database credentials and specify a secure administrator password (&gt;= 8 characters). Upon successful submission, the installer automatically writes \`config/install.lock\`, permanently preventing subsequent web access.
 
-### Step 6: Verify Deployment & Health Check
-Open your browser or run curl to test API health:
-\`\`\`
-https://api.weonboard.in/v1/health.php
-\`\`\`
-Expected response:
-\`\`\`json
-{"status":"healthy","service":"weonboard-api","version":"1.0.0","database":"available"}
-\`\`\`
+### Step 6: Verify Deployment & Automated Smoke Tests
+1. Test API health probe:
+   \`\`\`bash
+   curl -i https://api.weonboard.in/v1/health.php
+   \`\`\`
+   Expected response (HTTP 200):
+   \`\`\`json
+   {"status":"healthy","service":"weonboard-api","version":"1.0.0","database":"available"}
+   \`\`\`
+2. Run the included automated shell smoke test:
+   \`\`\`bash
+   chmod +x scripts/hostinger_smoke_test.sh
+   ./scripts/hostinger_smoke_test.sh
+   \`\`\`
 
 ## Security & Architecture Hardening
 - **PHP Version**: PHP 8.2+ with PDO enabled.
@@ -2168,6 +2284,7 @@ Expected response:
 - **Brute Force Protection**: Rate-limited admin login (5 attempts max / 15 minutes) via \`login_attempts\` table.
 - **Session Security**: \`HttpOnly\`, \`SameSite=Lax\`, \`session_regenerate_id(true)\` on login.
 - **Audit Logging**: Every inbound enquiry, freelancer registration, MSME proposal, and login attempt is recorded in \`audit_logs\`.
+- **Directory Protection**: Sensitive directories (\`config/\`, \`database/\`, \`scripts/\`, \`logs/\`) return HTTP 403 Forbidden via Apache rewrite rules.
 `
     }
   ];
