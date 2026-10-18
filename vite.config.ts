@@ -5,6 +5,8 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    // This project is published at https://aysergraphicsdvg.github.io/We-Onboard/
+    base: '/We-Onboard/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
