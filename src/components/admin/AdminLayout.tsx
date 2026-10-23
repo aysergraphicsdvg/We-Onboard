@@ -17,7 +17,10 @@ import {
   CheckCircle2, 
   ChevronDown,
   Menu,
-  X
+  X,
+  GraduationCap,
+  Network,
+  Landmark
 } from 'lucide-react';
 import { store } from '../../services/store';
 import { AdminRole, AdminUser } from '../../types';
@@ -52,7 +55,10 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
     { id: 'dashboard', label: 'Dashboard Overview', icon: <LayoutDashboard className="w-4 h-4" /> },
     { id: 'enquiries', label: 'Enquiry CRM', icon: <MessageSquareText className="w-4 h-4" />, badge: store.getState().enquiries.filter(e => e.status === 'New').length },
     { id: 'freelancers', label: 'Freelancers & KYC', icon: <Users className="w-4 h-4" />, badge: store.getState().freelancers.filter(f => f.status === 'Submitted' || f.status === 'Under Review').length },
+    { id: 'academy', label: 'Academy & Training', icon: <GraduationCap className="w-4 h-4" /> },
     { id: 'projects', label: 'Field Projects & Tasks', icon: <FolderKanban className="w-4 h-4" />, badge: store.getState().tasks.filter(t => t.status === 'Submitted').length },
+    { id: 'teams', label: 'Teams & Rank Engine', icon: <Network className="w-4 h-4" /> },
+    { id: 'financial', label: 'Financials & Ledger', icon: <Landmark className="w-4 h-4" />, badge: (store.getState().payoutRequests || []).filter(p => p.status === 'Requested').length || undefined },
     { id: 'msme', label: 'MSME Support Desk', icon: <Building2 className="w-4 h-4" /> },
     { id: 'clients', label: 'Clients & Franchises', icon: <Handshake className="w-4 h-4" /> },
     { id: 'cms', label: 'Website CMS & Banners', icon: <Globe className="w-4 h-4" /> },

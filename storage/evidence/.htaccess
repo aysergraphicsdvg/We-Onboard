@@ -1,0 +1,3 @@
+# Apache configuration to protect private uploaded task field evidence
+Order Deny,Allow
+Deny from all

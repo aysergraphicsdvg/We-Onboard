@@ -59,6 +59,46 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ onSelectTa
   return (
     <div className="space-y-8 animate-in fade-in">
       
+      {/* Demonstration Dataset & Multi-Role Governance Banner */}
+      <div className="bg-slate-900 text-white rounded-2xl p-5 border border-slate-800 shadow-md flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="bg-[#FFD014] text-[#02167F] font-black text-[10px] px-2 py-0.5 rounded uppercase tracking-wider">
+              DEMO DATASET ACTIVE
+            </span>
+            <span className="text-xs font-bold text-slate-200">
+              3 Field Projects &bull; 4 Test Associates &bull; 12 Realistic Tasks
+            </span>
+          </div>
+          <p className="text-xs text-slate-400">
+            Retail Merchant Onboarding, Restaurant Hygiene Audit, and Market Mystery Shopping workflows active with verified 70/20/10 double-entry ledger journals.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2.5 shrink-0">
+          <button
+            onClick={() => {
+              const res = store.seedDemoData();
+              alert(res.message);
+            }}
+            className="bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+          >
+            Re-seed Demo Data
+          </button>
+          <button
+            onClick={() => {
+              if (confirm('Are you sure you want to purge synthetic demo records? Legitimate production data will remain preserved.')) {
+                const res = store.resetDemoData();
+                alert(res.message);
+              }
+            }}
+            className="bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/40 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+          >
+            Purge Demo Data
+          </button>
+        </div>
+      </div>
+
       {/* 10 Summary Cards Grid */}
       <div>
         <div className="flex items-center justify-between mb-4">

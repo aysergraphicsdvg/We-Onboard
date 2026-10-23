@@ -74,11 +74,16 @@ try {
 
         // Regenerate session ID to prevent fixation
         session_regenerate_id(true);
+
+        // Strict Role Separation: Clear any freelancer session keys
+        unset($_SESSION['freelancer_id'], $_SESSION['freelancer_ref'], $_SESSION['freelancer_name'], $_SESSION['freelancer_email']);
+
         $_SESSION['admin_id'] = $user['id'];
         $_SESSION['admin_name'] = $user['name'];
         $_SESSION['admin_email'] = $user['email'];
         $_SESSION['admin_role'] = $user['role_name'];
         $_SESSION['admin_role_id'] = $user['role_id'];
+        $_SESSION['user_type'] = 'admin';
 
         // Update last_login
         $db->prepare("UPDATE admin_users SET last_login = NOW() WHERE id = ?")->execute([$user['id']]);
@@ -90,6 +95,7 @@ try {
         echo json_encode([
             'success' => true,
             'message' => 'Authentication successful.',
+            'csrf_token' => $_SESSION['csrf_token'],
             'user' => [
                 'id' => (string)$user['id'],
                 'name' => $user['name'],

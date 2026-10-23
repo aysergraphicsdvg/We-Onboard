@@ -1,0 +1,3 @@
+# Apache configuration to protect private uploaded identity documents
+Order Deny,Allow
+Deny from all

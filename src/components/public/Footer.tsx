@@ -150,6 +150,10 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
               <button onClick={() => setShowTerms(true)} className="hover:text-white transition-colors">
                 Terms and Conditions
               </button>
+              <span>|</span>
+              <button onClick={() => onNavigate('admin')} className="hover:text-[#FFD014] text-slate-400 transition-colors">
+                Staff Portal
+              </button>
             </div>
 
             <p>© 2026 We Onboard. Founded by Muhammd Ali Shoaib and Umme Morsi. All rights reserved.</p>

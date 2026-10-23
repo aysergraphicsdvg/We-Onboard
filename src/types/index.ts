@@ -67,14 +67,31 @@ export type FreelancerStatus =
   | 'Rejected'
   | 'Inactive';
 
+export type DocumentWorkflowStatus = 'Pending' | 'Approved' | 'Rejected' | 'Resubmission Required';
+
+export type OnboardingStatus = 
+  | 'Registered'
+  | 'Profile Incomplete'
+  | 'KYC Pending'
+  | 'Under Review'
+  | 'Action Required'
+  | 'Approved'
+  | 'Rejected';
+
 export interface FreelancerDocument {
   id: string;
+  documentRef?: string;
   name: string;
-  type: 'Aadhaar' | 'PAN' | 'Resume' | 'Address Proof' | 'Driving License';
+  type: 'Aadhaar' | 'PAN' | 'Resume' | 'Address Proof' | 'Driving License' | 'Bank Details' | 'Other';
   fileUrl?: string;
   fileName: string;
+  fileSize?: number;
   uploadedAt: string;
   verified: boolean;
+  status?: DocumentWorkflowStatus;
+  rejectionReason?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
 }
 
 export interface FreelancerTraining {
@@ -84,8 +101,18 @@ export interface FreelancerTraining {
   score?: number;
 }
 
+export interface FreelancerNotificationItem {
+  id: string;
+  title: string;
+  message: string;
+  type: string;
+  isRead: boolean;
+  createdAt: string;
+}
+
 export interface Freelancer {
   id: string; // e.g. WO-FR-2026-0042
+  registrationRef?: string;
   fullName: string;
   email: string;
   phone: string;
@@ -95,8 +122,8 @@ export interface Freelancer {
   city: string;
   state: string;
   pinCode: string;
-  isAdult: boolean;
-  hasSmartphone: boolean;
+  isAdult?: boolean;
+  hasSmartphone?: boolean;
   languages: string[];
   preferredAreas: string[];
   preferredWorkType: 'Full-time' | 'Part-time' | 'Flexible';
@@ -107,12 +134,16 @@ export interface Freelancer {
   preferredRole: FreelancerRole;
   previousEmployer?: string;
   status: FreelancerStatus;
+  onboardingStatus?: OnboardingStatus;
+  languagePreference?: string;
+  profileCompletedPercent?: number;
   registeredAt: string;
   assignedTeamLeader?: string;
   assignedProjectManager?: string;
   approvedWorkingAreas: string[];
   documents: FreelancerDocument[];
   trainings: FreelancerTraining[];
+  notifications?: FreelancerNotificationItem[];
   verificationNotes?: string;
   passwordHash?: string; // For self-service portal
   rating?: number;
@@ -120,6 +151,16 @@ export interface Freelancer {
   totalEarnings: number;
   pendingPayout: number;
   bankAccountMasked?: string;
+  currentRank?: FreelancerRank;
+  teamId?: number | string | null;
+  teamName?: string;
+  teamCode?: string;
+  qualityScore?: number | null;
+  qsSampleSize?: number;
+  qsStatus?: 'Insufficient Data' | 'Active' | 'Under Observation' | 'Suspended';
+  qsLastCalculatedAt?: string;
+  fraudFlag?: boolean;
+  fraudReason?: string;
 }
 
 export type ProjectStatus = 
@@ -132,6 +173,7 @@ export type ProjectStatus =
   | 'Cancelled';
 
 export type TaskStatus = 
+  | 'Available'
   | 'Assigned'
   | 'Accepted'
   | 'In Progress'
@@ -142,39 +184,67 @@ export type TaskStatus =
   | 'Rejected'
   | 'Cancelled';
 
+export interface TaskEvidenceFile {
+  id: string | number;
+  fieldName: string;
+  originalFilename: string;
+  fileSize: number;
+  mimeType: string;
+  uploadedAt: string;
+  viewUrl?: string;
+}
+
 export interface TaskEvidence {
-  id: string;
+  id?: string | number;
+  taskId?: string | number;
   submittedAt: string;
   freelancerNotes: string;
+  formData?: Record<string, any>;
   geoTag?: {
     latitude: number;
     longitude: number;
-    address: string;
+    address?: string;
   };
-  attachments: { name: string; url?: string }[];
+  attachments: { name: string; url?: string; fieldName?: string; size?: number }[];
+  files?: TaskEvidenceFile[];
+  idempotencyKey?: string;
+  isLocalDraft?: boolean;
 }
 
 export interface Task {
   id: string; // e.g. TSK-101
+  taskRef?: string;
   projectId: string;
+  projectName?: string;
   title: string;
   description: string;
+  instructions?: string;
   assignedFreelancerId?: string;
   assignedFreelancerName?: string;
   city: string;
   targetArea: string;
   deadline: string;
   evidenceRequirements: string[];
+  requiresLocation?: boolean;
   payoutAmount: number;
   status: TaskStatus;
   evidence?: TaskEvidence;
   reviewComment?: string;
   reviewedBy?: string;
+  reviewedByName?: string;
   reviewedAt?: string;
+  acceptedAt?: string;
+  submittedAt?: string;
+  reworkCount?: number;
+  requiredTrainingCourseId?: number | null;
+  requiredCourseTitle?: string;
+  isEligible?: boolean;
+  ineligibilityReason?: string;
 }
 
 export interface Project {
   id: string; // e.g. PRJ-2026-01
+  projectRef?: string;
   name: string;
   clientName: string;
   clientId?: string;
@@ -195,6 +265,16 @@ export interface Project {
   budget?: number;
   status: ProjectStatus;
   tasksCount: number;
+  requiredTrainingCourseId?: number | null;
+  requiredCourseTitle?: string;
+  requiredKycLevel?: string;
+  evidenceSchema?: {
+    fields?: { name: string; label: string; type: string; required: boolean }[];
+    evidence?: string[];
+  };
+  requiresLocation?: boolean;
+  payoutRate?: number;
+  maxTasksPerFreelancer?: number;
 }
 
 export type MsmeStatus = 
@@ -339,7 +419,7 @@ export interface AuditLog {
   id: string;
   actingUser: string;
   action: string;
-  recordType: 'Enquiry' | 'Freelancer' | 'Project' | 'Task' | 'MSME' | 'Client' | 'CMS' | 'Auth' | 'User';
+  recordType: 'Enquiry' | 'Freelancer' | 'Project' | 'Task' | 'MSME' | 'Client' | 'CMS' | 'Auth' | 'User' | 'Academy' | 'Certificate' | 'Team' | 'Rank' | 'System';
   recordId: string;
   details: string;
   timestamp: string;
@@ -350,8 +430,426 @@ export interface AppNotification {
   id: string;
   title: string;
   message: string;
-  type: 'enquiry' | 'freelancer' | 'task' | 'msme' | 'system';
+  type: 'enquiry' | 'freelancer' | 'task' | 'msme' | 'system' | 'academy' | 'rank';
   timestamp: string;
   read: boolean;
   link?: string;
 }
+
+// ==========================================
+// PHASE 4: ACADEMY & CERTIFICATION TYPES
+// ==========================================
+
+export type CourseCategory = 
+  | 'Field Operations'
+  | 'KYC & Verification'
+  | 'Merchant Acquisition'
+  | 'Safety & Ethics'
+  | 'Compliance';
+
+export type CourseStatus = 'Draft' | 'Published' | 'Archived';
+export type LessonContentType = 'text' | 'video_ref' | 'interactive';
+export type EnrollmentStatus = 'Enrolled' | 'In Progress' | 'Completed' | 'Dropped';
+
+export interface CourseLesson {
+  id: string | number;
+  moduleId: string | number;
+  courseId: string | number;
+  title: string;
+  contentType: LessonContentType;
+  content: string;
+  mediaUrl?: string;
+  durationMinutes: number;
+  sortOrder: number;
+  isCompleted?: boolean;
+}
+
+export interface CourseModule {
+  id: string | number;
+  courseId: string | number;
+  title: string;
+  description?: string;
+  sortOrder: number;
+  lessons: CourseLesson[];
+}
+
+export interface AssessmentQuestionOption {
+  id: string;
+  text: string;
+}
+
+export interface AssessmentQuestion {
+  id: string | number;
+  assessmentId: string | number;
+  questionText: string;
+  questionType: 'single_choice' | 'multi_choice' | 'true_false';
+  options: AssessmentQuestionOption[];
+  points: number;
+  sortOrder: number;
+  // Note: correctAnswers is only present in admin views, NEVER in client assessment taking
+  correctAnswers?: string[];
+  explanation?: string;
+}
+
+export interface CourseAssessment {
+  id: string | number;
+  courseId: string | number;
+  title: string;
+  description?: string;
+  passingScore: number; // e.g. 80
+  timeLimitMinutes: number; // e.g. 15
+  maxAttempts: number; // e.g. 3
+  questionsCount?: number;
+  questions?: AssessmentQuestion[];
+}
+
+export interface Course {
+  id: string | number;
+  courseCode: string; // e.g. 'WO-CRS-SAFE-01'
+  title: string;
+  slug: string;
+  description: string;
+  learningObjectives?: string[];
+  category: CourseCategory;
+  language: string;
+  estimatedMinutes: number;
+  thumbnailUrl?: string;
+  status: CourseStatus;
+  passingScore: number;
+  maxAssessmentAttempts: number;
+  isMandatory: boolean;
+  modulesCount?: number;
+  lessonsCount?: number;
+  enrollmentsCount?: number;
+  certificatesCount?: number;
+  resumeLessonId?: string | number | null;
+  modules?: CourseModule[];
+  assessment?: CourseAssessment;
+  enrollment?: CourseEnrollment;
+  certificate?: FreelancerCertificate;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CourseEnrollment {
+  id: string | number;
+  freelancerId: string | number;
+  courseId: string | number;
+  status: EnrollmentStatus;
+  progressPercent: number;
+  lastLessonId?: string | number | null;
+  enrolledAt: string;
+  completedAt?: string | null;
+  completedLessons?: Array<string | number>;
+  latestScorePercent?: number;
+}
+
+export interface AssessmentAttempt {
+  id: string | number;
+  assessmentId: string | number;
+  courseId: string | number;
+  freelancerId: string | number;
+  attemptNumber: number;
+  scorePercent: number;
+  passed: boolean;
+  submittedAt: string;
+  freelancerName?: string;
+  courseTitle?: string;
+}
+
+export interface FreelancerCertificate {
+  id: string | number;
+  certificateRef: string; // e.g. 'WO-CERT-2026-B8123C'
+  freelancerId: string | number;
+  freelancerName?: string;
+  courseId: string | number;
+  courseTitle?: string;
+  courseCode?: string;
+  issueDate: string;
+  scorePercent: number;
+  verificationCode: string; // e.g. 'V-987214'
+  metadata?: Record<string, any>;
+  createdAt: string;
+}
+
+// ==========================================
+// PHASE 6: PERFORMANCE, TEAMS & RANK ENGINE
+// ==========================================
+
+export type FreelancerRank = 
+  | 'Trainee'
+  | 'Team Member'
+  | 'Team Leader'
+  | 'Manager'
+  | 'City/Regional Head';
+
+export interface TeamMemberItem {
+  membershipId: number;
+  freelancerId: number | string;
+  registrationRef: string;
+  fullName: string;
+  email: string;
+  phone: string;
+  currentRank: FreelancerRank;
+  roleInTeam: 'Member' | 'Deputy Leader';
+  qualityScore: number | null;
+  fraudFlag: boolean;
+  approved30d: number;
+  isActiveMember: boolean;
+  joinedAt: string;
+}
+
+export interface Team {
+  id: number | string;
+  teamCode: string;
+  name: string;
+  city: string;
+  operatingArea?: string;
+  status: 'Active' | 'Inactive' | 'Archived';
+  leader?: {
+    id: number | string;
+    name: string;
+    email: string;
+    phone: string;
+    rank: FreelancerRank;
+    qualityScore: number | null;
+    fraudFlag: boolean;
+  } | null;
+  manager?: {
+    id: number | string;
+    name: string;
+    email: string;
+    phone: string;
+    rank: FreelancerRank;
+    qualityScore: number | null;
+  } | null;
+  totalMembers: number;
+  activeMembersCount: number;
+  isQualifyingTeam: boolean;
+  members?: TeamMemberItem[];
+  createdAt?: string;
+}
+
+export interface RankEligibilityCandidate {
+  freelancerId: number | string;
+  registrationRef: string;
+  fullName: string;
+  email: string;
+  phone: string;
+  city: string;
+  currentRank: FreelancerRank;
+  targetRank: FreelancerRank | null;
+  qualityScore: number | null;
+  qsStatus: string;
+  teamName?: string;
+  activeMembersInLedTeam: number;
+  qualifyingTeamsCount: number;
+  isEligible: boolean;
+  ineligibilityReasons: string[];
+  latestPromotionStatus: string;
+  thresholds: {
+    requiredQs: number;
+    requiredActiveMembers: number;
+    requiredQualifyingTeams: number;
+  };
+}
+
+export interface RankPromotionRecord {
+  id: number | string;
+  freelancer_id: number | string;
+  full_name?: string;
+  registration_ref?: string;
+  from_rank: FreelancerRank;
+  to_rank: FreelancerRank;
+  status: 'Eligible' | 'Nominated' | 'Approved' | 'Rejected';
+  eligibility_snapshot_json?: string;
+  reviewed_by?: number;
+  reviewed_by_name?: string;
+  decision_reason?: string;
+  reviewed_at?: string;
+  created_at: string;
+}
+
+// ==========================================
+// PHASE 7: FINANCIAL SUBSYSTEM & LEDGER
+// ==========================================
+
+export type LedgerAccountType = 'Asset' | 'Liability' | 'Equity' | 'Revenue' | 'Expense';
+
+export interface LedgerAccount {
+  id: number | string;
+  accountCode: string;
+  accountName: string;
+  accountType: LedgerAccountType;
+  description?: string;
+  isActive: boolean;
+  totalDebit?: number;
+  totalCredit?: number;
+  netBalance?: number;
+}
+
+export type JournalTransactionType = 
+  | 'EARNING_RECOGNITION'
+  | 'RESERVE_RELEASE'
+  | 'PAYOUT_REQUESTED'
+  | 'PAYOUT_SETTLED'
+  | 'PAYOUT_REVERSED'
+  | 'MANUAL_ADJUSTMENT';
+
+export interface LedgerEntry {
+  id: number | string;
+  journalId: number | string;
+  accountCode: string;
+  accountName?: string;
+  accountType?: LedgerAccountType;
+  entryType: 'DEBIT' | 'CREDIT';
+  amount: number;
+  entityType: 'Freelancer' | 'TeamLeader' | 'Manager' | 'Platform' | 'System';
+  entityId?: string | null;
+  lineNarration?: string;
+  createdAt: string;
+}
+
+export interface LedgerJournal {
+  id: number | string;
+  journalRef: string;
+  transactionType: JournalTransactionType;
+  referenceId?: string | null;
+  narration: string;
+  totalDebit: number;
+  totalCredit: number;
+  postedBy: string;
+  isReversed?: boolean;
+  reversedByJournalId?: number | null;
+  reversalOfJournalId?: number | null;
+  postedAt: string;
+  lines?: LedgerEntry[];
+}
+
+export interface EarningEntitlement {
+  id: number | string;
+  entitlementRef: string;
+  taskId: string | number;
+  taskRef?: string;
+  taskTitle?: string;
+  projectId: string | number;
+  projectName?: string;
+  freelancerId: string | number;
+  freelancerName?: string;
+  freelancerRef?: string;
+  grossRate: number;
+  freelancerShareGross: number; // 70%
+  freelancerReserveAmount: number; // 10% of 70% = 7%
+  freelancerShareNet: number; // 90% of 70% = 63%
+  teamLeaderId?: string | number | null;
+  teamLeaderName?: string;
+  teamLeaderShare: number; // 20%
+  teamLeaderRoutedToGrowth: boolean;
+  managerId?: string | number | null;
+  managerName?: string;
+  managerShare: number; // 10%
+  managerRoutedToGrowth: boolean;
+  growthPoolShare: number;
+  hierarchySnapshotJson?: string;
+  journalId: number | string;
+  journalRef?: string;
+  status: 'Recognized' | 'Reversed';
+  createdAt: string;
+}
+
+export interface ReserveRecord {
+  id: number | string;
+  reserveRef: string;
+  freelancerId: string | number;
+  freelancerName?: string;
+  freelancerRef?: string;
+  taskId: string | number;
+  taskRef?: string;
+  taskTitle?: string;
+  earningEntitlementId: number | string;
+  amount: number;
+  reservePct: number;
+  holdDays: number;
+  releaseDueAt: string;
+  releasedAt?: string | null;
+  secondsToRelease?: number;
+  status: 'Held' | 'Released' | 'Extended' | 'Reversed';
+  releaseJournalId?: number | string | null;
+  releaseJournalRef?: string;
+  createdAt: string;
+}
+
+export type PayoutStatus = 
+  | 'Requested'
+  | 'Under Review'
+  | 'Approved'
+  | 'Processing'
+  | 'Paid'
+  | 'Failed'
+  | 'Cancelled';
+
+export interface PayoutRequest {
+  id: number | string;
+  payoutRef: string;
+  idempotencyKey?: string;
+  freelancerId: string | number;
+  freelancerName?: string;
+  freelancerRef?: string;
+  amount: number;
+  paymentMethod: 'UPI' | 'Bank Transfer' | 'NEFT';
+  beneficiaryName: string;
+  beneficiaryDetails: string;
+  status: PayoutStatus;
+  requestJournalId?: number | string | null;
+  requestJournalRef?: string;
+  settlementJournalId?: number | string | null;
+  settlementJournalRef?: string;
+  reversalJournalId?: number | string | null;
+  reversalJournalRef?: string;
+  providerName?: string;
+  providerTransferId?: string | null;
+  failureReason?: string | null;
+  reviewedBy?: string | null;
+  reviewedAt?: string | null;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface FreelancerWallet {
+  freelancerId: string | number;
+  freelancerName: string;
+  registrationRef: string;
+  currentRank: FreelancerRank;
+  availableBalance: number;
+  reservedBalance: number;
+  pendingEarnings: number;
+  totalEarned: number;
+  payoutsInProgress: number;
+  paidPayouts: number;
+  currency: string;
+  currencySymbol: string;
+  isKycApproved: boolean;
+  hasFraudFlag: boolean;
+  minPayoutAmount: number;
+  maxPayoutAmount: number;
+  lastReconciledAt?: string;
+}
+
+export interface TrialBalanceAccount {
+  account_code: string;
+  account_name: string;
+  account_type: LedgerAccountType;
+  total_debit: number;
+  total_credit: number;
+  net_balance: number;
+}
+
+export interface TrialBalanceReport {
+  accounts: TrialBalanceAccount[];
+  grand_total_debit: number;
+  grand_total_credit: number;
+  discrepancy: number;
+  is_balanced: boolean;
+}
+
+

@@ -29,7 +29,10 @@ import { AdminLogin } from './components/admin/AdminLogin';
 import { DashboardOverview } from './components/admin/DashboardOverview';
 import { EnquiryManager } from './components/admin/EnquiryManager';
 import { FreelancerManager } from './components/admin/FreelancerManager';
+import { AcademyManager } from './components/admin/AcademyManager';
 import { ProjectManager } from './components/admin/ProjectManager';
+import { TeamRankManager } from './components/admin/TeamRankManager';
+import { FinancialConsole } from './components/admin/FinancialConsole';
 import { MsmeManager } from './components/admin/MsmeManager';
 import { ClientFranchiseManager } from './components/admin/ClientFranchiseManager';
 import { CmsManager } from './components/admin/CmsManager';
@@ -38,8 +41,8 @@ import { AuditLogViewer } from './components/admin/AuditLogViewer';
 import { HostingerDeployModal } from './components/admin/HostingerDeployModal';
 import { InstallerModal } from './components/admin/InstallerModal';
 
-// Icons for quick switcher
-import { Globe, UserCheck, UserPlus, Download, Wrench } from 'lucide-react';
+// Icons
+// (Quick Portal bottom bar removed per user requirement)
 
 export default function App() {
   const [currentView, setCurrentView] = useState<'website' | 'admin' | 'freelancer' | 'freelancer-register'>('website');
@@ -145,10 +148,10 @@ export default function App() {
         />
       )}
 
-      {/* 3. FREELANCER SELF-SERVICE PORTAL ROUTE (UNDER DEVELOPMENT) */}
+      {/* 3. FREELANCER SELF-SERVICE PORTAL */}
       {currentView === 'freelancer' && (
-        <FreelancerUnderDevelopment
-          onBackToWebsite={() => {
+        <FreelancerPortal
+          onBack={() => {
             setCurrentView('website');
             window.location.hash = '';
           }}
@@ -185,7 +188,10 @@ export default function App() {
               )}
               {adminTab === 'enquiries' && <EnquiryManager />}
               {adminTab === 'freelancers' && <FreelancerManager />}
+              {adminTab === 'academy' && <AcademyManager />}
               {adminTab === 'projects' && <ProjectManager />}
+              {adminTab === 'teams' && <TeamRankManager />}
+              {adminTab === 'financial' && <FinancialConsole />}
               {adminTab === 'msme' && <MsmeManager />}
               {adminTab === 'clients' && <ClientFranchiseManager />}
               {adminTab === 'cms' && (
@@ -214,75 +220,6 @@ export default function App() {
       {showInstallerModal && (
         <InstallerModal onClose={() => setShowInstallerModal(false)} />
       )}
-
-      {/* BOTTOM FLOATING ENVIRONMENT TESTER SWITCHER (Accessible in all views) */}
-      <div className="fixed bottom-4 left-4 z-50 flex flex-wrap items-center gap-1.5 bg-[#02167F]/95 text-white p-2 rounded-2xl shadow-2xl border border-white/20 backdrop-blur-md text-[11px] font-bold">
-        <span className="text-[#FFD014] px-2 py-0.5 uppercase tracking-wider text-[10px]">
-          Quick Portal:
-        </span>
-
-        <button
-          onClick={() => {
-            setCurrentView('website');
-            window.location.hash = '';
-          }}
-          className={`px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1 ${
-            currentView === 'website' ? 'bg-[#FFD014] text-[#02167F]' : 'hover:bg-white/10 text-white'
-          }`}
-          title="Approved Public Website"
-        >
-          <Globe className="w-3 h-3" />
-          <span>Public Website</span>
-        </button>
-
-        <button
-          onClick={() => {
-            setCurrentView('freelancer');
-            window.location.hash = '#freelancer';
-          }}
-          className={`px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1 ${
-            currentView === 'freelancer' ? 'bg-[#FFD014] text-[#02167F]' : 'hover:bg-white/10 text-white'
-          }`}
-          title="Freelancer Self-Service Portal (Under Development)"
-        >
-          <UserCheck className="w-3 h-3" />
-          <span>Freelancer Portal</span>
-        </button>
-
-        <button
-          onClick={() => {
-            setCurrentView('freelancer-register');
-            window.location.hash = '#join-as-freelancer';
-          }}
-          className={`px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1 ${
-            currentView === 'freelancer-register' ? 'bg-[#FFD014] text-[#02167F]' : 'hover:bg-white/10 text-white'
-          }`}
-          title="Public Freelancer Registration Form"
-        >
-          <UserPlus className="w-3 h-3" />
-          <span>Join as Freelancer</span>
-        </button>
-
-        <div className="w-px h-4 bg-white/20 mx-0.5"></div>
-
-        <button
-          onClick={() => setShowHostingerModal(true)}
-          className="bg-amber-400 hover:bg-amber-300 text-slate-900 px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1 font-extrabold shadow-sm"
-          title="Download Hostinger Business Shared Hosting Package (.zip)"
-        >
-          <Download className="w-3 h-3" />
-          <span>Hostinger .ZIP</span>
-        </button>
-
-        <button
-          onClick={() => setShowInstallerModal(true)}
-          className="bg-white/10 hover:bg-white/20 text-slate-200 px-2 py-1 rounded-lg transition-colors flex items-center gap-1"
-          title="Simulate /install.php one-time setup"
-        >
-          <Wrench className="w-3 h-3" />
-          <span>Installer</span>
-        </button>
-      </div>
 
     </div>
   );

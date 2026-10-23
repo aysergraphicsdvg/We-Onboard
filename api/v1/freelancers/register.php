@@ -51,6 +51,7 @@ $preferredRole = trim($data['preferred_role'] ?? 'Rider / Delivery Partner');
 $prevEmployer = trim($data['previous_employer'] ?? '');
 $idempotencyKey = trim($_SERVER['HTTP_X_IDEMPOTENCY_KEY'] ?? ($data['idempotency_key'] ?? ''));
 
+$password = $data['password'] ?? '';
 $cleanPhone = preg_replace('/[^\d+]/', '', $phone);
 $digits = preg_replace('/\D/', '', $cleanPhone);
 
@@ -70,6 +71,33 @@ if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
     http_response_code(400);
     echo json_encode(['success' => false, 'error' => 'Please provide a valid email address.']);
     exit;
+}
+
+// Strict Age Verification (Must be at least 18 years old)
+try {
+    $dobDate = new DateTime($dob);
+    $today = new DateTime('today');
+    $age = $dobDate->diff($today)->y;
+    if ($age < 18) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'Eligibility requirement: You must be at least 18 years of age to register as an independent field associate.']);
+        exit;
+    }
+} catch (Exception $e) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'error' => 'Please provide a valid Date of Birth (YYYY-MM-DD).']);
+    exit;
+}
+
+// Password validation (if provided, must be at least 8 chars)
+$passwordHash = null;
+if (!empty($password)) {
+    if (strlen($password) < 8) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'Security requirement: Password must be at least 8 characters in length.']);
+        exit;
+    }
+    $passwordHash = password_hash($password, PASSWORD_DEFAULT);
 }
 
 $currentEndpoint = 'freelancer_register';
@@ -117,22 +145,29 @@ try {
     $ref = 'WO-FR-' . date('Y') . '-' . str_pad((string)rand(100, 9999), 4, '0', STR_PAD_LEFT);
 
     $stmt = $db->prepare("INSERT INTO freelancers 
-        (registration_ref, full_name, email, phone, dob, gender, residential_address, city, state, pin_code, is_adult, has_smartphone, languages, preferred_areas, preferred_work_type, education, previous_experience_years, sales_field_experience, skills, preferred_role, previous_employer, status) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Submitted')");
+        (registration_ref, full_name, email, phone, dob, gender, residential_address, city, state, pin_code, is_adult, has_smartphone, languages, preferred_areas, preferred_work_type, education, previous_experience_years, sales_field_experience, skills, preferred_role, previous_employer, status, onboarding_status, language_preference, profile_completed_percent, password_hash) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Submitted', 'KYC Pending', 'en', 60, ?)");
     
     $stmt->execute([
         $ref, $fullName, $email, $cleanPhone, $dob, $gender, $address, $city, $state, $pinCode,
         $isAdult, $hasSmartphone, $languages, $preferredAreas, $workType, $education,
-        $expYears, $salesExp, $skills, $preferredRole, $prevEmployer ?: null
+        $expYears, $salesExp, $skills, $preferredRole, $prevEmployer ?: null, $passwordHash
     ]);
+
+    $newFreelancerId = (int)$db->lastInsertId();
+
+    // Welcome Notification
+    $notifStmt = $db->prepare("INSERT INTO freelancer_notifications (freelancer_id, title, message, type) VALUES (?, 'Welcome to We Onboard', 'Your application has been received under our Zero Joining Fee guarantee. Next step: Upload your KYC identity documents to activate project assignments.', 'kyc')");
+    $notifStmt->execute([$newFreelancerId]);
 
     // Record audit
     $auditStmt = $db->prepare("INSERT INTO audit_logs (acting_user, action, record_type, record_id, details, ip_address) VALUES (?, ?, ?, ?, ?, ?)");
-    $auditStmt->execute(['Public Candidate', 'Freelancer Registration Submitted', 'Freelancer', $ref, "{$fullName} registered for {$preferredRole} in {$city}", $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1']);
+    $auditStmt->execute(['Public Candidate', 'Freelancer Registration Submitted', 'Freelancer', $ref, "{$fullName} registered for {$preferredRole} in {$city} (Zero Fee Policy)", $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1']);
 
     $responseJson = json_encode([
         'success' => true,
         'reference_id' => $ref,
+        'has_account' => !empty($passwordHash),
         'message' => 'Application submitted successfully under Zero Joining Fee policy. Our Bangalore team will review within 24-48 hours.'
     ]);
 

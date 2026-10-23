@@ -50,12 +50,23 @@ class Idempotency {
         }
 
         // Fast-path: Check if key already exists
-        $stmt = $db->prepare("SELECT endpoint, request_payload_hash, response_json FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1");
+        $stmt = $db->prepare("SELECT endpoint, request_payload_hash, response_json, created_at FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1");
         $stmt->execute([$key]);
         $existing = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if ($existing) {
-            return self::resolveExisting($db, $existing, $key, $endpoint, $payloadHash);
+            // Check if this was an abandoned in-progress reservation older than 120 seconds
+            if ($existing['response_json'] === self::PENDING_SENTINEL && !empty($existing['created_at'])) {
+                $createdTime = strtotime($existing['created_at']);
+                if ($createdTime !== false && (time() - $createdTime) > 120) {
+                    // Safe recovery of abandoned lock: release stale reservation so caller can retry cleanly
+                    self::release($db, $key);
+                    $existing = null;
+                }
+            }
+            if ($existing) {
+                return self::resolveExisting($db, $existing, $key, $endpoint, $payloadHash);
+            }
         }
 
         // Atomically attempt reservation via unique INSERT

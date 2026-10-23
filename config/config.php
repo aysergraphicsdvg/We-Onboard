@@ -59,8 +59,18 @@ if (empty($_SESSION['csrf_token'])) {
 
 function verify_csrf() {
     $token = $_POST['csrf_token'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
-    if (!hash_equals($_SESSION['csrf_token'] ?? '', $token)) {
+    if (empty($token)) {
+        $raw = file_get_contents('php://input');
+        if (!empty($raw)) {
+            $json = json_decode($raw, true);
+            if (is_array($json) && !empty($json['csrf_token'])) {
+                $token = $json['csrf_token'];
+            }
+        }
+    }
+    if (empty($_SESSION['csrf_token']) || !hash_equals($_SESSION['csrf_token'], (string)$token)) {
         http_response_code(403);
+        header('Content-Type: application/json; charset=utf-8');
         die(json_encode(['success' => false, 'error' => 'Security validation (CSRF) failed. Please refresh the page.']));
     }
 }

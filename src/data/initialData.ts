@@ -809,3 +809,810 @@ export const initialNotifications: AppNotification[] = [
     link: 'freelancers'
   }
 ];
+
+export const initialAcademyCourses: any[] = [
+  {
+    id: 1,
+    courseCode: 'WO-CRS-SAFE-01',
+    title: 'Field Ethics & Safety Protocols',
+    slug: 'field-ethics-and-safety-protocols',
+    description: 'Mandatory foundational course for all We Onboard field executives, team leaders, and project managers. Covers on-site professionalism, brand representation, physical safety, conflict de-escalation, and ethical data collection.',
+    learningObjectives: [
+      'Understand We Onboard zero-compromise safety protocols',
+      'Master professional merchant and customer interactions',
+      'Learn standard escalation procedures for on-field hazards',
+      'Enforce DPDP privacy standards and zero informal cash policy'
+    ],
+    category: 'Safety & Ethics',
+    language: 'en',
+    estimatedMinutes: 35,
+    status: 'Published',
+    passingScore: 80,
+    maxAssessmentAttempts: 3,
+    isMandatory: true,
+    modulesCount: 2,
+    lessonsCount: 3,
+    modules: [
+      {
+        id: 1,
+        courseId: 1,
+        title: 'Module 1: Professional Representation & Code of Conduct',
+        description: 'Dress code, badge display, ethical communications, and anti-bribery standards.',
+        sortOrder: 1,
+        lessons: [
+          {
+            id: 1,
+            moduleId: 1,
+            courseId: 1,
+            title: '1.1 Brand Identity & Field Demeanor',
+            contentType: 'text',
+            durationMinutes: 10,
+            sortOrder: 1,
+            content: `Welcome to the We Onboard Field Operations Team.
+
+### 1. Mandatory Identity Display
+- Every field executive must display their official We Onboard photo ID card prominently on their chest at all times during operational visits.
+- Wear clean, professional attire appropriate for retail visits.
+
+### 2. Zero-Fee Principle
+- You must NEVER request, accept, or hint at any cash, tip, or informal fee from any merchant, applicant, or client.
+- We Onboard services are 100% cashless. Any solicitation of cash results in immediate permanent termination and legal reporting.
+
+### 3. Professional Communication
+- Greet store owners respectfully in their preferred local language.
+- Clearly introduce yourself: "Hello, I am [Your Name] from We Onboard, representing [Client Brand]."
+- State the exact purpose of your visit clearly before requesting any document or space inspection.`
+          },
+          {
+            id: 2,
+            moduleId: 1,
+            courseId: 1,
+            title: '1.2 Customer Data Confidentiality & Fraud Prevention',
+            contentType: 'text',
+            durationMinutes: 12,
+            sortOrder: 2,
+            content: `### Protecting Sensitive Information
+During onboarding, you will handle sensitive personal identification information (Aadhaar, PAN, Bank Passbooks, GST certificates).
+
+### Strict Rules:
+1. Never take personal screenshots or photograph documents on personal messaging apps (WhatsApp, Telegram).
+2. All photo evidence must be captured directly through the authorized We Onboard mobile client.
+3. Do not store merchant contact numbers in your personal contact list.
+4. Any falsification of location, fake OTP collection, or tampering with signatures is treated as criminal fraud under Indian IT Act and IPC sections.`
+          }
+        ]
+      },
+      {
+        id: 2,
+        courseId: 1,
+        title: 'Module 2: Field Safety & Emergency Response',
+        description: 'Personal protection, weather hazards, handling difficult situations, and SOS escalation.',
+        sortOrder: 2,
+        lessons: [
+          {
+            id: 3,
+            moduleId: 2,
+            courseId: 1,
+            title: '2.1 Personal Safety in Dense & Remote Markets',
+            contentType: 'text',
+            durationMinutes: 13,
+            sortOrder: 1,
+            content: `### Field Safety Guidelines
+Your safety is our highest priority.
+
+### Rules for Safe Navigation:
+- Plan your daily route in advance through approved arterial roads and marketplaces.
+- Do not enter isolated warehouses or private basements alone. Request the merchant to meet in the front public area of the commercial establishment.
+- Keep your smartphone battery above 30% at all times. Carry a portable power bank during long-distance field runs.
+- In the event of severe weather, flash floods, or local strikes, stop work immediately, take shelter, and inform your assigned Team Leader via the portal.`
+          }
+        ]
+      }
+    ],
+    assessment: {
+      id: 1,
+      courseId: 1,
+      title: 'Field Ethics & Safety Certification Exam',
+      description: 'Comprehensive 5-question test evaluating your understanding of We Onboard conduct, zero-fee compliance, and field safety protocols. 80% passing score required for certificate issuance.',
+      passingScore: 80,
+      timeLimitMinutes: 15,
+      maxAttempts: 3,
+      questionsCount: 5,
+      questions: [
+        {
+          id: 1,
+          assessmentId: 1,
+          questionText: 'Is a We Onboard field executive ever allowed to accept cash payments or tips from a merchant during an onboarding visit?',
+          questionType: 'single_choice',
+          points: 1,
+          sortOrder: 1,
+          options: [
+            { id: 'a', text: 'Yes, up to Rs 100 as a travel reimbursement' },
+            { id: 'b', text: 'Only if the merchant explicitly insists on giving a tip' },
+            { id: 'c', text: 'Never. We Onboard has a strict zero-cash policy; all services are 100% cashless' },
+            { id: 'd', text: 'Yes, if approved verbally by a friend' }
+          ],
+          correctAnswers: ['c'],
+          explanation: 'We Onboard strictly enforces a zero-cash policy. Demanding or receiving any informal cash is ground for immediate suspension and legal action.'
+        },
+        {
+          id: 2,
+          assessmentId: 1,
+          questionText: 'Where should customer identity documents (like PAN or Aadhaar) be captured and stored?',
+          questionType: 'single_choice',
+          points: 1,
+          sortOrder: 2,
+          options: [
+            { id: 'a', text: 'Saved to personal phone gallery and sent via WhatsApp' },
+            { id: 'b', text: 'Captured directly inside the authorized We Onboard application and never retained on personal devices' },
+            { id: 'c', text: 'Uploaded to public cloud storage for easy sharing' },
+            { id: 'd', text: 'Stored in the phone notes app' }
+          ],
+          correctAnswers: ['b'],
+          explanation: 'Customer data must only be captured in the authorized app with end-to-end encryption. Storing sensitive PII on personal devices violates DPDP privacy standards.'
+        },
+        {
+          id: 3,
+          assessmentId: 1,
+          questionText: 'What should you do if an aggressive or hostile merchant refuses an audit and demands that you leave?',
+          questionType: 'single_choice',
+          points: 1,
+          sortOrder: 3,
+          options: [
+            { id: 'a', text: 'Argue back until they agree to the audit' },
+            { id: 'b', text: 'Refuse to leave until the manager calls the police' },
+            { id: 'c', text: 'Politely de-escalate, leave the premises immediately, and log an incident report to your Team Leader' },
+            { id: 'd', text: 'Call fellow freelancers to gather outside the shop' }
+          ],
+          correctAnswers: ['c'],
+          explanation: 'Personal safety is paramount. Never engage in arguments; politely exit and notify your team leader immediately.'
+        },
+        {
+          id: 4,
+          assessmentId: 1,
+          questionText: 'What is the minimum passing score required to earn a verified We Onboard certificate on this assessment?',
+          questionType: 'single_choice',
+          points: 1,
+          sortOrder: 4,
+          options: [
+            { id: 'a', text: '50%' },
+            { id: 'b', text: '60%' },
+            { id: 'c', text: '80%' },
+            { id: 'd', text: '100%' }
+          ],
+          correctAnswers: ['c'],
+          explanation: 'We Onboard requires an 80% passing threshold to guarantee high operational quality and safety standard mastery.'
+        },
+        {
+          id: 5,
+          assessmentId: 1,
+          questionText: 'What identity item must be visibly displayed by an associate at all times during retail visits?',
+          questionType: 'single_choice',
+          points: 1,
+          sortOrder: 5,
+          options: [
+            { id: 'a', text: 'Any casual college ID card' },
+            { id: 'b', text: 'Official We Onboard Associate Photo ID card' },
+            { id: 'c', text: 'Driver license kept in back pocket' },
+            { id: 'd', text: 'No ID is necessary if wearing a branded cap' }
+          ],
+          correctAnswers: ['b'],
+          explanation: 'Official photo ID cards must be worn and displayed prominently to establish authority and trust with commercial merchants.'
+        }
+      ]
+    }
+  },
+  {
+    id: 2,
+    courseCode: 'WO-CRS-POS-02',
+    title: 'Merchant Digital POS & Soundbox Onboarding SOP',
+    slug: 'merchant-digital-pos-soundbox-sop',
+    description: 'Comprehensive training on deploying QR codes, NFC soundboxes, and POS swipe terminals for tier-1 merchant aggregators. Learn merchant identity check, live sound verification, merchant app demonstration, and fraud prevention.',
+    learningObjectives: [
+      'Complete document collection and merchant KYC validation',
+      'Perform physical POS soundbox installation and test broadcast',
+      'Educate merchants on digital settlements and chargebacks',
+      'Avoid fake onboardings through physical storefront tamper checks'
+    ],
+    category: 'Merchant Acquisition',
+    language: 'en',
+    estimatedMinutes: 50,
+    status: 'Published',
+    passingScore: 80,
+    maxAssessmentAttempts: 3,
+    isMandatory: false,
+    modulesCount: 2,
+    lessonsCount: 3,
+    modules: [
+      {
+        id: 3,
+        courseId: 2,
+        title: 'Module 1: Merchant Verification & Eligibility',
+        description: 'Physical establishment verification, GST/FSSAI checks, and bank details.',
+        sortOrder: 1,
+        lessons: [
+          {
+            id: 4,
+            moduleId: 3,
+            courseId: 2,
+            title: '1.1 Physical Storefront Verification',
+            contentType: 'text',
+            durationMinutes: 15,
+            sortOrder: 1,
+            content: `### Verifying Merchant Identity
+Before deploying any payment terminal or QR standee, verify that the shop is an active, legitimate business.
+
+### Verification Checklist:
+1. Capture a clear, non-blurred wide photo showing the shop signboard and entrance.
+2. Confirm the physical address matches the geo-coordinates.
+3. Validate owner identity against their PAN card and bank account proof.
+4. Verify that the bank account name matches the business or proprietor legal name.`
+          },
+          {
+            id: 5,
+            moduleId: 3,
+            courseId: 2,
+            title: '1.2 Soundbox Setup & Live Audio Broadcast Test',
+            contentType: 'text',
+            durationMinutes: 15,
+            sortOrder: 2,
+            content: `### Installing Audio Payment Terminals
+1. Turn on the device and ensure cellular signal indicator is solid green.
+2. Link the device serial number (scanned via QR) to the merchant VPA in the agent app.
+3. Initiate a live test transaction of Rs 1.
+4. Confirm audible broadcast in local language: "Payment of Rs 1 received on [App]".
+5. Ensure merchant understands battery charging and daily operation.`
+          }
+        ]
+      },
+      {
+        id: 4,
+        courseId: 2,
+        title: 'Module 2: Merchant Education & Fraud SOP',
+        description: 'Training the merchant on voice confirmation, scam prevention, and helpline escalation.',
+        sortOrder: 2,
+        lessons: [
+          {
+            id: 6,
+            moduleId: 4,
+            courseId: 2,
+            title: '2.1 Preventing Screenshot Fraud',
+            contentType: 'text',
+            durationMinutes: 20,
+            sortOrder: 1,
+            content: `### Educating Merchants on Digital Frauds
+Teach merchants to rely exclusively on Soundbox voice announcements or direct SMS confirmations, NOT customer phone screenshots, which can be easily faked by fraudulent apps.`
+          }
+        ]
+      }
+    ],
+    assessment: {
+      id: 2,
+      courseId: 2,
+      title: 'Merchant Onboarding SOP Certification Exam',
+      description: '5-question test on merchant onboarding verification, terminal setup, and fraud prevention.',
+      passingScore: 80,
+      timeLimitMinutes: 15,
+      maxAttempts: 3,
+      questionsCount: 3,
+      questions: [
+        {
+          id: 6,
+          assessmentId: 2,
+          questionText: 'Why must a test transaction of Rs 1 be conducted after linking a soundbox?',
+          questionType: 'single_choice',
+          points: 1,
+          sortOrder: 1,
+          options: [
+            { id: 'a', text: 'To collect commission' },
+            { id: 'b', text: 'To verify that the terminal correctly receives and announces live audio payment alerts' },
+            { id: 'c', text: 'It is optional and can be skipped' },
+            { id: 'd', text: 'To test the merchant personal phone speaker' }
+          ],
+          correctAnswers: ['b'],
+          explanation: 'Live test transaction guarantees device binding and audio broadcast before handover.'
+        },
+        {
+          id: 7,
+          assessmentId: 2,
+          questionText: 'What should a merchant rely on to confirm a customer payment?',
+          questionType: 'single_choice',
+          points: 1,
+          sortOrder: 2,
+          options: [
+            { id: 'a', text: 'The customer showing a payment screenshot on their phone' },
+            { id: 'b', text: 'The customer verbal assurance' },
+            { id: 'c', text: 'Official soundbox voice announcement and merchant app notification' },
+            { id: 'd', text: 'Nothing; all payments are guaranteed' }
+          ],
+          correctAnswers: ['c'],
+          explanation: 'Screenshots can be faked; live audio announcements and verified app entries are secure.'
+        },
+        {
+          id: 8,
+          assessmentId: 2,
+          questionText: 'What is required if the store address on documentation does not match the physical location?',
+          questionType: 'single_choice',
+          points: 1,
+          sortOrder: 3,
+          options: [
+            { id: 'a', text: 'Deploy anyway and change the address later' },
+            { id: 'b', text: 'Hold deployment, photograph the discrepancy, and request updated address proof' },
+            { id: 'c', text: 'Accept a cash fee to overlook the error' },
+            { id: 'd', text: 'Enter a fake GPS pin' }
+          ],
+          correctAnswers: ['b'],
+          explanation: 'Address discrepancies must be investigated and resolved before activation.'
+        }
+      ]
+    }
+  },
+  {
+    id: 3,
+    courseCode: 'WO-CRS-AUD-03',
+    title: 'Field Audits & Stock Verification Protocols',
+    slug: 'field-audits-and-stock-verification',
+    description: 'Master retail audit procedures, geo-tagged photo evidence capture, mystery shopping compliance, and inventory variance documentation for enterprise clients.',
+    learningObjectives: [
+      'Operate audit mobile application with GPS tagging',
+      'Accurately count stock displays and promotional collateral',
+      'Record unbiased merchant audit observations',
+      'Report non-compliance and fraudulent merchandising'
+    ],
+    category: 'Field Operations',
+    language: 'en',
+    estimatedMinutes: 45,
+    status: 'Published',
+    passingScore: 80,
+    maxAssessmentAttempts: 3,
+    isMandatory: false,
+    modulesCount: 1,
+    lessonsCount: 1,
+    modules: [
+      {
+        id: 5,
+        courseId: 3,
+        title: 'Module 1: Retail Audit Fundamentals',
+        description: 'Observation techniques, checklist discipline, and geo-fenced verification.',
+        sortOrder: 1,
+        lessons: [
+          {
+            id: 7,
+            moduleId: 5,
+            courseId: 3,
+            title: '1.1 Retail Audit Execution SOP',
+            contentType: 'text',
+            durationMinutes: 20,
+            sortOrder: 1,
+            content: `### Field Audit Standard Operating Procedure
+Field audits provide unbiased ground truth to enterprise brands.
+
+### Key Tenets:
+1. Accuracy over speed: Count actual physical facings and stock on shelves.
+2. High-resolution geo-tagged evidence: Always enable high-accuracy GPS.
+3. No bias or coaching: Never prompt store managers to temporarily change displays before your audit photo.`
+          }
+        ]
+      }
+    ],
+    assessment: {
+      id: 3,
+      courseId: 3,
+      title: 'Retail Audit SOP Certification Exam',
+      description: 'Test your understanding of inventory verification and evidence capture.',
+      passingScore: 80,
+      timeLimitMinutes: 15,
+      maxAttempts: 3,
+      questionsCount: 2,
+      questions: [
+        {
+          id: 9,
+          assessmentId: 3,
+          questionText: 'When taking audit photos, which setting must always be enabled on your device?',
+          questionType: 'single_choice',
+          points: 1,
+          sortOrder: 1,
+          options: [
+            { id: 'a', text: 'Beautify filters' },
+            { id: 'b', text: 'GPS Location Tagging (High Accuracy)' },
+            { id: 'c', text: 'Airplane mode' },
+            { id: 'd', text: 'Black & white mode' }
+          ],
+          correctAnswers: ['b'],
+          explanation: 'GPS geo-tagging confirms physical presence at the designated retail outlet.'
+        },
+        {
+          id: 10,
+          assessmentId: 3,
+          questionText: 'Should an auditor inform the store manager in advance to rearrange shelves before taking photos?',
+          questionType: 'single_choice',
+          points: 1,
+          sortOrder: 2,
+          options: [
+            { id: 'a', text: 'Yes, so the store looks better' },
+            { id: 'b', text: 'No. Audits must document the true, unmanipulated condition as found' },
+            { id: 'c', text: 'Only if the manager offers a gift' },
+            { id: 'd', text: 'Yes, to get better ratings' }
+          ],
+          correctAnswers: ['b'],
+          explanation: 'Audits must represent genuine ground truth without stage manipulation.'
+        }
+      ]
+    }
+  }
+];
+
+export const initialCertificates: any[] = [
+  {
+    id: 1,
+    certificateRef: 'WO-CERT-2026-F81A9B',
+    freelancerId: 'WO-FR-2026-001',
+    freelancerName: 'Karthik Raman',
+    courseId: 1,
+    courseTitle: 'Field Ethics & Safety Protocols',
+    courseCode: 'WO-CRS-SAFE-01',
+    issueDate: '2026-10-04',
+    scorePercent: 95,
+    verificationCode: 'V-894215',
+    createdAt: '2026-10-04 11:30:00'
+  }
+];
+
+export const initialTeams: any[] = [
+  {
+    id: '1',
+    teamCode: 'TM-BLR-01',
+    name: 'Indiranagar Commercial Activation Team',
+    city: 'Bengaluru',
+    operatingArea: '100ft Road, CMH Road, Defence Colony',
+    status: 'Active',
+    leader: {
+      id: 'WO-FR-2026-001',
+      name: 'Karthik Raman',
+      email: 'karthik.raman@gmail.com',
+      phone: '+91 98451 90812',
+      rank: 'Team Leader',
+      qualityScore: 92.5,
+      fraudFlag: false
+    },
+    manager: {
+      id: 'WO-FR-2026-010',
+      name: 'Rajesh Nambiar',
+      email: 'rajesh.nambiar@weonboard.in',
+      phone: '+91 98440 99881',
+      rank: 'Manager',
+      qualityScore: 91.0
+    },
+    totalMembers: 12,
+    activeMembersCount: 11,
+    isQualifyingTeam: true,
+    members: [
+      {
+        membershipId: 1,
+        freelancerId: 'WO-FR-2026-001',
+        registrationRef: 'WO-FR-2026-001',
+        fullName: 'Karthik Raman',
+        email: 'karthik.raman@gmail.com',
+        phone: '+91 98451 90812',
+        currentRank: 'Team Leader',
+        roleInTeam: 'Deputy Leader',
+        qualityScore: 92.5,
+        fraudFlag: false,
+        approved30d: 6,
+        isActiveMember: true,
+        joinedAt: '2026-09-15'
+      },
+      {
+        membershipId: 2,
+        freelancerId: 'WO-FR-2026-002',
+        registrationRef: 'WO-FR-2026-002',
+        fullName: 'Syed Imran',
+        email: 'syed.imran@outlook.com',
+        phone: '+91 97314 22001',
+        currentRank: 'Team Member',
+        roleInTeam: 'Member',
+        qualityScore: 88.0,
+        fraudFlag: false,
+        approved30d: 4,
+        isActiveMember: true,
+        joinedAt: '2026-10-08'
+      }
+    ],
+    createdAt: '2026-09-01'
+  },
+  {
+    id: '2',
+    teamCode: 'TM-BLR-02',
+    name: 'Koramangala Retail Corridor Team',
+    city: 'Bengaluru',
+    operatingArea: '80ft Road, Sony Signal, 4th & 5th Block',
+    status: 'Active',
+    leader: {
+      id: 'WO-FR-2026-002',
+      name: 'Syed Imran',
+      email: 'syed.imran@outlook.com',
+      phone: '+91 97314 22001',
+      rank: 'Team Member',
+      qualityScore: 88.0,
+      fraudFlag: false
+    },
+    manager: {
+      id: 'WO-FR-2026-010',
+      name: 'Rajesh Nambiar',
+      email: 'rajesh.nambiar@weonboard.in',
+      phone: '+91 98440 99881',
+      rank: 'Manager',
+      qualityScore: 91.0
+    },
+    totalMembers: 11,
+    activeMembersCount: 10,
+    isQualifyingTeam: true,
+    createdAt: '2026-09-10'
+  },
+  {
+    id: '3',
+    teamCode: 'TM-BLR-03',
+    name: 'HSR Layout & BTM Field Unit',
+    city: 'Bengaluru',
+    operatingArea: '27th Main, Sector 1-4, Silk Board Junction',
+    status: 'Active',
+    leader: null,
+    manager: {
+      id: 'WO-FR-2026-010',
+      name: 'Rajesh Nambiar',
+      email: 'rajesh.nambiar@weonboard.in',
+      phone: '+91 98440 99881',
+      rank: 'Manager',
+      qualityScore: 91.0
+    },
+    totalMembers: 11,
+    activeMembersCount: 10,
+    isQualifyingTeam: true,
+    createdAt: '2026-09-20'
+  },
+  {
+    id: '4',
+    teamCode: 'TM-BLR-04',
+    name: 'Whitefield Tech Corridor Rollout Team',
+    city: 'Bengaluru',
+    operatingArea: 'ITPL Main Road, Hope Farm, Kadugodi',
+    status: 'Active',
+    leader: null,
+    manager: null,
+    totalMembers: 5,
+    activeMembersCount: 4,
+    isQualifyingTeam: false,
+    createdAt: '2026-10-01'
+  }
+];
+
+export const initialRankPromotions: any[] = [
+  {
+    id: '1',
+    freelancer_id: 'WO-FR-2026-001',
+    full_name: 'Karthik Raman',
+    from_rank: 'Team Member',
+    to_rank: 'Team Leader',
+    status: 'Approved',
+    eligibility_snapshot_json: JSON.stringify({ quality_score: 92.5, active_members: 11 }),
+    reviewed_by: 1,
+    reviewed_by_name: 'Muhammad Ali Shoaib',
+    decision_reason: 'Exceeded active member criteria (11 active associates) and maintained 92.5 QS.',
+    reviewed_at: '2026-10-01 10:00:00',
+    created_at: '2026-10-01 09:30:00'
+  }
+];
+
+// ==========================================
+// PHASE 7: INITIAL FINANCIAL DATASET
+// ==========================================
+
+export const initialLedgerAccounts: any[] = [
+  { accountCode: '1001', accountName: 'Cash & Bank Clearing', accountType: 'Asset', description: 'Platform disbursement bank account and escrow' },
+  { accountCode: '2001', accountName: 'Freelancer Payable (Available)', accountType: 'Liability', description: 'Available withdrawable balance owed to freelancers' },
+  { accountCode: '2002', accountName: 'Team Leader Payable', accountType: 'Liability', description: '20% leadership override share owed to Team Leaders' },
+  { accountCode: '2003', accountName: 'Manager Payable', accountType: 'Liability', description: '10% area management share owed to Area Managers' },
+  { accountCode: '2004', accountName: 'Reserve Liability (15-day Hold)', accountType: 'Liability', description: '10% quality assurance reserve held for 15 days' },
+  { accountCode: '2005', accountName: 'Payout In-Transit Clearing', accountType: 'Liability', description: 'Held during requested and in-progress payout processing' },
+  { accountCode: '3001', accountName: 'Growth Pool (Platform Retained)', accountType: 'Equity', description: 'Retained unallocated supervisor shares' },
+  { accountCode: '5001', accountName: 'Project Direct Execution Cost', accountType: 'Expense', description: 'Platform delivery expense recognized upon task QC approval' }
+];
+
+export const initialLedgerJournals: any[] = [
+  {
+    id: 1,
+    journalRef: 'JRN-20261013-A1F9',
+    transactionType: 'EARNING_RECOGNITION',
+    referenceId: 'TSK-103',
+    narration: 'QC Earning Recognition for Task TSK-103 (Shelf Hygiene Audit)',
+    totalDebit: 1200.00,
+    totalCredit: 1200.00,
+    postedBy: 'Muhammad Ali Shoaib',
+    postedAt: '2026-10-13 18:15:00',
+    lines: [
+      { id: 1, journalId: 1, accountCode: '5001', entryType: 'DEBIT', amount: 1200.00, entityType: 'Platform', entityId: 'PROJECT_PRJ-2026-03', lineNarration: 'Execution cost for TSK-103' },
+      { id: 2, journalId: 1, accountCode: '2001', entryType: 'CREDIT', amount: 756.00, entityType: 'Freelancer', entityId: 'WO-FR-2026-001', lineNarration: 'Net available earnings (90% of 70% share) for Karthik Raman' },
+      { id: 3, journalId: 1, accountCode: '2004', entryType: 'CREDIT', amount: 84.00, entityType: 'Freelancer', entityId: 'WO-FR-2026-001', lineNarration: '10% quality reserve held for 15 days' },
+      { id: 4, journalId: 1, accountCode: '2002', entryType: 'CREDIT', amount: 240.00, entityType: 'TeamLeader', entityId: 'WO-FR-2026-001', lineNarration: '20% Team Leader override share' },
+      { id: 5, journalId: 1, accountCode: '2003', entryType: 'CREDIT', amount: 120.00, entityType: 'Manager', entityId: 'WO-FR-2026-010', lineNarration: '10% Manager supervision share' }
+    ]
+  },
+  {
+    id: 2,
+    journalRef: 'JRN-20261014-B8C2',
+    transactionType: 'EARNING_RECOGNITION',
+    referenceId: 'TSK-101',
+    narration: 'QC Earning Recognition for Task TSK-101 (Kirana Merchant Onboarding)',
+    totalDebit: 800.00,
+    totalCredit: 800.00,
+    postedBy: 'SYSTEM',
+    postedAt: '2026-10-14 11:30:00',
+    lines: [
+      { id: 6, journalId: 2, accountCode: '5001', entryType: 'DEBIT', amount: 800.00, entityType: 'Platform', entityId: 'PROJECT_PRJ-2026-01', lineNarration: 'Execution cost for TSK-101' },
+      { id: 7, journalId: 2, accountCode: '2001', entryType: 'CREDIT', amount: 504.00, entityType: 'Freelancer', entityId: 'WO-FR-2026-002', lineNarration: 'Net available earnings for Ananya Sharma' },
+      { id: 8, journalId: 2, accountCode: '2004', entryType: 'CREDIT', amount: 56.00, entityType: 'Freelancer', entityId: 'WO-FR-2026-002', lineNarration: '10% quality reserve held for 15 days' },
+      { id: 9, journalId: 2, accountCode: '2002', entryType: 'CREDIT', amount: 160.00, entityType: 'TeamLeader', entityId: 'WO-FR-2026-001', lineNarration: '20% Team Leader override share to Karthik Raman' },
+      { id: 10, journalId: 2, accountCode: '3001', entryType: 'CREDIT', amount: 80.00, entityType: 'Platform', entityId: 'GROWTH_POOL', lineNarration: 'Unallocated manager share routed to Growth Pool' }
+    ]
+  }
+];
+
+export const initialEarningEntitlements: any[] = [
+  {
+    id: 1,
+    entitlementRef: 'ENT-20261013-1001',
+    taskId: 'TSK-103',
+    taskRef: 'TSK-103',
+    taskTitle: 'Shelf Hygiene Audit — Indiranagar Dark Store #04',
+    projectId: 'PRJ-2026-03',
+    projectName: 'Blinkit / Zepto Dark Store Hygiene Audit',
+    freelancerId: 'WO-FR-2026-001',
+    freelancerName: 'Karthik Raman',
+    freelancerRef: 'WO-FR-2026-001',
+    grossRate: 1200.00,
+    freelancerShareGross: 840.00,
+    freelancerReserveAmount: 84.00,
+    freelancerShareNet: 756.00,
+    teamLeaderId: 'WO-FR-2026-001',
+    teamLeaderName: 'Karthik Raman',
+    teamLeaderShare: 240.00,
+    teamLeaderRoutedToGrowth: false,
+    managerId: 'WO-FR-2026-010',
+    managerName: 'Rajesh Nambiar',
+    managerShare: 120.00,
+    managerRoutedToGrowth: false,
+    growthPoolShare: 0.00,
+    journalId: 1,
+    journalRef: 'JRN-20261013-A1F9',
+    status: 'Recognized',
+    createdAt: '2026-10-13 18:15:00'
+  },
+  {
+    id: 2,
+    entitlementRef: 'ENT-20261014-1002',
+    taskId: 'TSK-101',
+    taskRef: 'TSK-101',
+    taskTitle: 'Kirana Merchant QR & Soundbox Onboarding',
+    projectId: 'PRJ-2026-01',
+    projectName: 'PhonePe Merchant QR & Soundbox Rollout',
+    freelancerId: 'WO-FR-2026-002',
+    freelancerName: 'Ananya Sharma',
+    freelancerRef: 'WO-FR-2026-002',
+    grossRate: 800.00,
+    freelancerShareGross: 560.00,
+    freelancerReserveAmount: 56.00,
+    freelancerShareNet: 504.00,
+    teamLeaderId: 'WO-FR-2026-001',
+    teamLeaderName: 'Karthik Raman',
+    teamLeaderShare: 160.00,
+    teamLeaderRoutedToGrowth: false,
+    managerId: null,
+    managerShare: 0.00,
+    managerRoutedToGrowth: true,
+    growthPoolShare: 80.00,
+    journalId: 2,
+    journalRef: 'JRN-20261014-B8C2',
+    status: 'Recognized',
+    createdAt: '2026-10-14 11:30:00'
+  }
+];
+
+export const initialReserveRecords: any[] = [
+  {
+    id: 1,
+    reserveRef: 'RES-20261013-001',
+    freelancerId: 'WO-FR-2026-001',
+    freelancerName: 'Karthik Raman',
+    freelancerRef: 'WO-FR-2026-001',
+    taskId: 'TSK-103',
+    taskRef: 'TSK-103',
+    taskTitle: 'Shelf Hygiene Audit — Indiranagar Dark Store #04',
+    earningEntitlementId: 1,
+    amount: 84.00,
+    reservePct: 10.00,
+    holdDays: 15,
+    releaseDueAt: '2026-10-28 18:15:00',
+    status: 'Held',
+    secondsToRelease: 648000,
+    createdAt: '2026-10-13 18:15:00'
+  },
+  {
+    id: 2,
+    reserveRef: 'RES-20261014-002',
+    freelancerId: 'WO-FR-2026-002',
+    freelancerName: 'Ananya Sharma',
+    freelancerRef: 'WO-FR-2026-002',
+    taskId: 'TSK-101',
+    taskRef: 'TSK-101',
+    taskTitle: 'Kirana Merchant QR & Soundbox Onboarding',
+    earningEntitlementId: 2,
+    amount: 56.00,
+    reservePct: 10.00,
+    holdDays: 15,
+    releaseDueAt: '2026-10-29 11:30:00',
+    status: 'Held',
+    secondsToRelease: 710000,
+    createdAt: '2026-10-14 11:30:00'
+  }
+];
+
+export const initialPayoutRequests: any[] = [
+  {
+    id: 1,
+    payoutRef: 'PO-20261010-001',
+    freelancerId: 'WO-FR-2026-001',
+    freelancerName: 'Karthik Raman',
+    freelancerRef: 'WO-FR-2026-001',
+    amount: 1500.00,
+    paymentMethod: 'UPI',
+    beneficiaryName: 'Karthik Raman',
+    beneficiaryDetails: 'karthik.raman@okhdfcbank',
+    status: 'Paid',
+    providerName: 'SimulatedPaymentAdapter',
+    providerTransferId: 'SIM-TRF-98231',
+    reviewedBy: 'Finance Ops',
+    reviewedAt: '2026-10-10 15:30:00',
+    createdAt: '2026-10-10 12:00:00'
+  }
+];
+
+export const initialWallets: Record<string, any> = {
+  'WO-FR-2026-001': {
+    freelancerId: 'WO-FR-2026-001',
+    freelancerName: 'Karthik Raman',
+    registrationRef: 'WO-FR-2026-001',
+    currentRank: 'Team Leader',
+    availableBalance: 1156.00, // 756 (own task) + 240 (TL override TSK-103) + 160 (TL override TSK-101)
+    reservedBalance: 84.00,
+    pendingEarnings: 0.00,
+    totalEarned: 2740.00,
+    payoutsInProgress: 0.00,
+    paidPayouts: 1500.00,
+    currency: 'INR',
+    currencySymbol: '₹',
+    isKycApproved: true,
+    hasFraudFlag: false,
+    minPayoutAmount: 500.00,
+    maxPayoutAmount: 50000.00
+  },
+  'WO-FR-2026-002': {
+    freelancerId: 'WO-FR-2026-002',
+    freelancerName: 'Ananya Sharma',
+    registrationRef: 'WO-FR-2026-002',
+    currentRank: 'Team Member',
+    availableBalance: 504.00,
+    reservedBalance: 56.00,
+    pendingEarnings: 650.00,
+    totalEarned: 560.00,
+    payoutsInProgress: 0.00,
+    paidPayouts: 0.00,
+    currency: 'INR',
+    currencySymbol: '₹',
+    isKycApproved: true,
+    hasFraudFlag: false,
+    minPayoutAmount: 500.00,
+    maxPayoutAmount: 50000.00
+  }
+};
+
+

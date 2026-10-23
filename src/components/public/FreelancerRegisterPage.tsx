@@ -39,11 +39,28 @@ export const FreelancerRegisterPage: React.FC<FreelancerRegisterPageProps> = ({ 
   const [previousEmployer, setPreviousEmployer] = useState('');
   const [resumeFileName, setResumeFileName] = useState('');
 
-  // Step 4: Consent
+  // Step 4: Account Security & Consent
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
   const [consentAccurate, setConsentAccurate] = useState(true);
   const [consentPrivacy, setConsentPrivacy] = useState(true);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const [submittedId, setSubmittedId] = useState<string | null>(null);
+
+  const calculateAge = (dobString: string): number => {
+    const birth = new Date(dobString);
+    const today = new Date();
+    let age = today.getFullYear() - birth.getFullYear();
+    const m = today.getMonth() - birth.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) {
+      age--;
+    }
+    return isNaN(age) ? 0 : age;
+  };
+
+  const currentAge = calculateAge(dob);
 
   const toggleLanguage = (lang: string) => {
     if (languages.includes(lang)) {
@@ -57,9 +74,30 @@ export const FreelancerRegisterPage: React.FC<FreelancerRegisterPageProps> = ({ 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError(null);
+    setPasswordError('');
+
     if (!fullName || !phone || !email || !isAdult || !hasSmartphone) {
-      alert('Please fill all mandatory fields and confirm eligibility requirements.');
+      setFormError('Please fill all mandatory fields and confirm eligibility requirements.');
       return;
+    }
+
+    if (currentAge < 18) {
+      setFormError('Eligibility Requirement: Candidates must be at least 18 years old to register.');
+      return;
+    }
+
+    if (password) {
+      if (password.length < 8) {
+        setPasswordError('Password must be at least 8 characters in length.');
+        setFormError('Password must be at least 8 characters.');
+        return;
+      }
+      if (password !== confirmPassword) {
+        setPasswordError('Passwords do not match. Please re-enter identical passwords.');
+        setFormError('Passwords do not match.');
+        return;
+      }
     }
 
     setIsSubmitting(true);
@@ -70,7 +108,7 @@ export const FreelancerRegisterPage: React.FC<FreelancerRegisterPageProps> = ({ 
         phone,
         dob,
         gender,
-        residential_address: address || 'Indiranagar, Bengaluru',
+        residential_address: address || 'Bengaluru',
         city,
         state,
         pin_code: pinCode,
@@ -84,17 +122,18 @@ export const FreelancerRegisterPage: React.FC<FreelancerRegisterPageProps> = ({ 
         sales_field_experience: salesExperience,
         skills: skills.split(',').map((s) => s.trim()),
         preferred_role: preferredRole,
-        previous_employer: previousEmployer || undefined
+        previous_employer: previousEmployer || undefined,
+        password: password || undefined
       });
 
       if (res.success && res.reference_id) {
         setSubmittedId(res.reference_id);
       } else {
-        alert(res.error || 'Failed to submit registration. Please try again.');
+        setFormError(res.error || res.message || 'Failed to submit registration. Please try again.');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert('Error submitting registration. Please try again.');
+      setFormError('Error submitting registration. Please verify your details or network connection.');
     } finally {
       setIsSubmitting(false);
     }
@@ -145,23 +184,27 @@ export const FreelancerRegisterPage: React.FC<FreelancerRegisterPageProps> = ({ 
               </div>
             </div>
 
-            <p className="text-sm text-slate-600 max-w-lg mx-auto">
-              Our Freelancer Operations Coordinator in Bangalore will review your credentials within 24–48 hours. 
-              The <strong>Freelancer Portal</strong> is currently under development with exciting new options being added and will be available soon!
-            </p>
+            <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl p-4 text-xs max-w-md mx-auto space-y-1">
+              <strong className="block text-sm font-bold text-emerald-800">
+                Zero Joining Fee Guarantee Applied
+              </strong>
+              <p>
+                Your account is active. Log in to your Freelancer Portal to upload your mandatory KYC verification documents and track operational onboarding.
+              </p>
+            </div>
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-4">
               <button
                 onClick={onOpenPortal}
-                className="w-full sm:w-auto bg-[#02167F] hover:bg-[#031d99] text-[#FFD014] font-bold px-6 py-3.5 rounded-xl text-sm transition-colors flex items-center justify-center gap-2 shadow"
+                className="w-full sm:w-auto bg-[#02167F] hover:bg-[#031d99] text-[#FFD014] font-bold px-6 py-3.5 rounded-xl text-sm transition-colors flex items-center justify-center gap-2 shadow cursor-pointer"
               >
-                <span>Check Portal Status (Under Development)</span>
+                <span>Log In to Freelancer Portal</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
 
               <button
                 onClick={onBack}
-                className="w-full sm:w-auto border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold px-6 py-3.5 rounded-xl text-sm transition-colors"
+                className="w-full sm:w-auto border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold px-6 py-3.5 rounded-xl text-sm transition-colors cursor-pointer"
               >
                 Return to Homepage
               </button>
@@ -267,14 +310,22 @@ export const FreelancerRegisterPage: React.FC<FreelancerRegisterPageProps> = ({ 
                     <div>
                       <label className="block text-xs font-bold text-slate-700 mb-1">
                         Date of Birth <span className="text-red-500">*</span>
+                        <span className="font-normal text-slate-500 ml-1">({currentAge} yrs old)</span>
                       </label>
                       <input
                         type="date"
                         required
                         value={dob}
                         onChange={(e) => setDob(e.target.value)}
-                        className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-[#02167F] focus:outline-none bg-white"
+                        className={`w-full px-3.5 py-2.5 rounded-lg border text-sm focus:ring-2 focus:outline-none bg-white ${
+                          currentAge < 18 ? 'border-red-500 focus:ring-red-500' : 'border-slate-300 focus:ring-[#02167F]'
+                        }`}
                       />
+                      {currentAge < 18 && (
+                        <p className="text-[11px] text-red-600 font-semibold mt-1">
+                          Eligibility notice: You must be at least 18 years old to register as an independent field associate.
+                        </p>
+                      )}
                     </div>
 
                     <div>
@@ -339,8 +390,9 @@ export const FreelancerRegisterPage: React.FC<FreelancerRegisterPageProps> = ({ 
                   <div className="pt-4 flex justify-end">
                     <button
                       type="button"
+                      disabled={currentAge < 18 || !fullName.trim() || !phone.trim() || !email.trim()}
                       onClick={() => setStep(2)}
-                      className="bg-[#02167F] hover:bg-[#031d99] text-white font-bold px-6 py-2.5 rounded-lg text-sm flex items-center gap-2"
+                      className="bg-[#02167F] hover:bg-[#031d99] disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold px-6 py-2.5 rounded-lg text-sm flex items-center gap-2 cursor-pointer"
                     >
                       <span>Continue to Eligibility</span>
                       <ArrowRight className="w-4 h-4 text-[#FFD014]" />
@@ -591,13 +643,65 @@ export const FreelancerRegisterPage: React.FC<FreelancerRegisterPageProps> = ({ 
                 </div>
               )}
 
-              {/* STEP 4: Legal Consent & Submit */}
+              {/* STEP 4: Account Credentials, Consent & Submit */}
               {step === 4 && (
                 <div className="space-y-4 animate-in fade-in">
                   <h3 className="text-lg font-bold text-[#02167F] flex items-center gap-2">
                     <ShieldCheck className="w-5 h-5 text-emerald-600" />
-                    <span>Consent & Candidate Declarations</span>
+                    <span>Portal Credentials & Consent</span>
                   </h3>
+
+                  {/* Account Password Setup */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+                    <div>
+                      <strong className="block text-xs font-bold text-[#02167F] uppercase tracking-wider">
+                        Freelancer Portal Login Password
+                      </strong>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Create an 8+ character password to access your self-service dashboard for KYC submission and tracking.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                          Account Password <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="password"
+                          required
+                          value={password}
+                          onChange={(e) => {
+                            setPassword(e.target.value);
+                            setPasswordError('');
+                          }}
+                          placeholder="Min. 8 characters"
+                          className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:ring-2 focus:ring-[#02167F] focus:outline-none bg-white"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                          Confirm Password <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="password"
+                          required
+                          value={confirmPassword}
+                          onChange={(e) => {
+                            setConfirmPassword(e.target.value);
+                            setPasswordError('');
+                          }}
+                          placeholder="Re-enter password"
+                          className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:ring-2 focus:ring-[#02167F] focus:outline-none bg-white"
+                        />
+                      </div>
+                    </div>
+
+                    {passwordError && (
+                      <p className="text-xs text-red-600 font-semibold">{passwordError}</p>
+                    )}
+                  </div>
 
                   <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-900 space-y-1">
                     <strong className="block text-sm font-bold text-[#02167F]">
@@ -637,21 +741,27 @@ export const FreelancerRegisterPage: React.FC<FreelancerRegisterPageProps> = ({ 
                     </div>
                   </div>
 
+                  {formError && (
+                    <div className="bg-red-50 border border-red-200 text-red-800 text-xs rounded-xl p-3 font-semibold">
+                      {formError}
+                    </div>
+                  )}
+
                   <div className="pt-6 border-t border-slate-200 flex justify-between items-center">
                     <button
                       type="button"
                       onClick={() => setStep(3)}
-                      className="border border-slate-300 px-5 py-2.5 rounded-lg text-xs font-bold text-slate-700 hover:bg-slate-50"
+                      className="border border-slate-300 px-5 py-2.5 rounded-lg text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
                     >
                       &larr; Back
                     </button>
 
                     <button
                       type="submit"
-                      disabled={!consentAccurate || !consentPrivacy}
-                      className="bg-[#FFD014] hover:bg-[#e6bb0d] text-[#02167F] font-extrabold px-8 py-3.5 rounded-xl text-base transition-colors shadow-lg disabled:opacity-50 flex items-center gap-2"
+                      disabled={isSubmitting || !consentAccurate || !consentPrivacy || (password.length > 0 && password.length < 8)}
+                      className="bg-[#FFD014] hover:bg-[#e6bb0d] text-[#02167F] font-extrabold px-8 py-3.5 rounded-xl text-base transition-colors shadow-lg disabled:opacity-50 flex items-center gap-2 cursor-pointer"
                     >
-                      <span>Submit Freelancer Registration</span>
+                      <span>{isSubmitting ? 'Submitting Application...' : 'Submit Freelancer Registration'}</span>
                       <ArrowRight className="w-4 h-4" />
                     </button>
                   </div>

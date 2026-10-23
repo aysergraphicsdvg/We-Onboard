@@ -34,6 +34,7 @@ try {
         echo json_encode([
             'success' => true,
             'authenticated' => true,
+            'csrf_token' => $_SESSION['csrf_token'],
             'user' => [
                 'id' => (string)$user['id'],
                 'name' => $user['name'],
