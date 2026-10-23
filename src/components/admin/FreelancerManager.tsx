@@ -98,8 +98,8 @@ export const FreelancerManager: React.FC = () => {
   const handleOpenProfile = (fl: Freelancer) => {
     setSelectedFreelancer(fl);
     setVerificationNotes(fl.verificationNotes || '');
-    setNewStatus(fl.status);
-    setNewOnboardingStatus(fl.onboardingStatus || 'KYC Pending');
+    setNewStatus(fl.status as FreelancerStatus);
+    setNewOnboardingStatus((fl.onboardingStatus || 'KYC Pending') as OnboardingStatus);
     setApprovedAreas(fl.approvedWorkingAreas.join(', '));
     setActionSuccessMsg(null);
   };

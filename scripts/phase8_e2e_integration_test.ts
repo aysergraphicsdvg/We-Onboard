@@ -16,6 +16,7 @@
 
 import { store } from '../src/services/store';
 import { generateHostingerFiles } from '../src/services/hostingerPackage';
+import { FreelancerStatus, OnboardingStatus } from '../src/types';
 import crypto from 'crypto';
 
 interface TestResult {
@@ -67,8 +68,8 @@ async function runPhase8Tests() {
     salesFieldExperience: true,
     skills: ['Merchant Onboarding'],
     preferredRole: 'Team Member',
-    status: 'Submitted' as const,
-    onboardingStatus: 'Submitted' as const,
+    status: 'Submitted' as FreelancerStatus,
+    onboardingStatus: 'Submitted' as OnboardingStatus,
     registeredAt: new Date().toISOString(),
     approvedWorkingAreas: [],
     documents: [],

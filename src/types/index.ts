@@ -52,7 +52,9 @@ export type FreelancerRole =
   | 'Team Member / Field Executive'
   | 'Team Leader'
   | 'Project Manager'
-  | 'Freelancer / Independent Field Associate';
+  | 'Freelancer / Independent Field Associate'
+  | 'Team Member'
+  | 'Freelancer';
 
 export type FreelancerStatus = 
   | 'Submitted'
@@ -82,7 +84,7 @@ export interface FreelancerDocument {
   id: string;
   documentRef?: string;
   name: string;
-  type: 'Aadhaar' | 'PAN' | 'Resume' | 'Address Proof' | 'Driving License' | 'Bank Details' | 'Other';
+  type: 'Aadhaar' | 'PAN' | 'Resume' | 'Address Proof' | 'Driving License' | 'Bank Details' | 'Other' | 'Aadhaar / National ID' | 'PAN / Tax ID';
   fileUrl?: string;
   fileName: string;
   fileSize?: number;
@@ -131,10 +133,10 @@ export interface Freelancer {
   previousExperienceYears: number;
   salesFieldExperience: boolean;
   skills: string[];
-  preferredRole: FreelancerRole;
+  preferredRole: FreelancerRole | string;
   previousEmployer?: string;
-  status: FreelancerStatus;
-  onboardingStatus?: OnboardingStatus;
+  status: FreelancerStatus | string;
+  onboardingStatus?: OnboardingStatus | string;
   languagePreference?: string;
   profileCompletedPercent?: number;
   registeredAt: string;
@@ -197,8 +199,9 @@ export interface TaskEvidenceFile {
 export interface TaskEvidence {
   id?: string | number;
   taskId?: string | number;
-  submittedAt: string;
-  freelancerNotes: string;
+  submittedAt?: string;
+  freelancerNotes?: string;
+  notes?: string;
   formData?: Record<string, any>;
   geoTag?: {
     latitude: number;
@@ -216,18 +219,20 @@ export interface Task {
   taskRef?: string;
   projectId: string;
   projectName?: string;
+  projectTitle?: string;
   title: string;
-  description: string;
+  description?: string;
   instructions?: string;
   assignedFreelancerId?: string;
   assignedFreelancerName?: string;
-  city: string;
-  targetArea: string;
-  deadline: string;
-  evidenceRequirements: string[];
+  city?: string;
+  targetArea?: string;
+  deadline?: string;
+  evidenceRequirements?: string[];
   requiresLocation?: boolean;
   payoutAmount: number;
   status: TaskStatus;
+  priority?: string;
   evidence?: TaskEvidence;
   reviewComment?: string;
   reviewedBy?: string;
@@ -235,8 +240,9 @@ export interface Task {
   reviewedAt?: string;
   acceptedAt?: string;
   submittedAt?: string;
+  completedAt?: string;
   reworkCount?: number;
-  requiredTrainingCourseId?: number | null;
+  requiredTrainingCourseId?: number | string | null;
   requiredCourseTitle?: string;
   isEligible?: boolean;
   ineligibilityReason?: string;
@@ -265,7 +271,7 @@ export interface Project {
   budget?: number;
   status: ProjectStatus;
   tasksCount: number;
-  requiredTrainingCourseId?: number | null;
+  requiredTrainingCourseId?: number | string | null;
   requiredCourseTitle?: string;
   requiredKycLevel?: string;
   evidenceSchema?: {
@@ -419,7 +425,7 @@ export interface AuditLog {
   id: string;
   actingUser: string;
   action: string;
-  recordType: 'Enquiry' | 'Freelancer' | 'Project' | 'Task' | 'MSME' | 'Client' | 'CMS' | 'Auth' | 'User' | 'Academy' | 'Certificate' | 'Team' | 'Rank' | 'System';
+  recordType: 'Enquiry' | 'Freelancer' | 'Project' | 'Task' | 'MSME' | 'Client' | 'CMS' | 'Auth' | 'User' | 'Academy' | 'Certificate' | 'Team' | 'Rank' | 'System' | 'Payout' | 'Ledger';
   recordId: string;
   details: string;
   timestamp: string;
@@ -430,7 +436,7 @@ export interface AppNotification {
   id: string;
   title: string;
   message: string;
-  type: 'enquiry' | 'freelancer' | 'task' | 'msme' | 'system' | 'academy' | 'rank';
+  type: 'enquiry' | 'freelancer' | 'task' | 'msme' | 'system' | 'academy' | 'rank' | 'payout' | 'ledger';
   timestamp: string;
   read: boolean;
   link?: string;
@@ -565,11 +571,14 @@ export interface FreelancerCertificate {
   courseId: string | number;
   courseTitle?: string;
   courseCode?: string;
-  issueDate: string;
-  scorePercent: number;
+  issueDate?: string;
+  issuedAt?: string;
+  scorePercent?: number;
+  score?: number;
+  passingScore?: number;
   verificationCode: string; // e.g. 'V-987214'
   metadata?: Record<string, any>;
-  createdAt: string;
+  createdAt?: string;
 }
 
 // ==========================================
@@ -590,10 +599,12 @@ export interface TeamMemberItem {
   fullName: string;
   email: string;
   phone: string;
-  currentRank: FreelancerRank;
-  roleInTeam: 'Member' | 'Deputy Leader';
+  currentRank?: FreelancerRank;
+  rank?: FreelancerRank | string;
+  roleInTeam?: 'Member' | 'Deputy Leader';
   qualityScore: number | null;
-  fraudFlag: boolean;
+  rating?: number;
+  fraudFlag?: boolean;
   approved30d: number;
   isActiveMember: boolean;
   joinedAt: string;
@@ -606,6 +617,8 @@ export interface Team {
   city: string;
   operatingArea?: string;
   status: 'Active' | 'Inactive' | 'Archived';
+  leaderId?: string | number;
+  managerId?: string | number;
   leader?: {
     id: number | string;
     name: string;

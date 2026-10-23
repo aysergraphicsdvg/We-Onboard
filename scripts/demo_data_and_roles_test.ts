@@ -62,11 +62,11 @@ async function runTests() {
   assert(p1?.targetUnits === 40 && p1?.paymentModel === 'Per Activation', 'Project 1 targets 40 units on Per Activation model');
 
   assert(Boolean(p2), 'Project 2 exists: Restaurant & MSME Field Audit');
-  assert(p2?.targetAreas?.includes('HSR Layout') && p2?.serviceCategory === 'Field audits and surveys', 'Project 2 targets HSR/BTM corridors for audits');
+  assert(Boolean(p2?.targetAreas?.includes('HSR Layout') && p2?.serviceCategory === 'Field audits and surveys'), 'Project 2 targets HSR/BTM corridors for audits');
   assert(p2?.targetUnits === 30 && p2?.paymentModel === 'Per Audit', 'Project 2 targets 30 units on Per Audit model');
 
   assert(Boolean(p3), 'Project 3 exists: Market Survey & Mystery Shopping');
-  assert(p3?.targetAreas?.includes('Whitefield'), 'Project 3 targets Whitefield corridor');
+  assert(Boolean(p3?.targetAreas?.includes('Whitefield')), 'Project 3 targets Whitefield corridor');
   assert(p3?.targetUnits === 50 && p3?.budget === 40000, 'Project 3 targets 50 units with ₹40,000 budget');
 
   // --- SUITE 3: WORKFLOW STATE MACHINE COVERAGE ---
@@ -114,8 +114,8 @@ async function runTests() {
   
   const leaderTeam = store.getState().teams.find(t => (t as any).leaderId === 'DEMO-TL-01' || t.leader?.id === 'DEMO-TL-01');
   assert(Boolean(leaderTeam), 'Team Leader has an authorized team (Team Alpha)');
-  assert(leaderTeam?.members.some(m => m.freelancerId === 'DEMO-TM-01'), 'Team Alpha includes Pooja Hegde');
-  assert(leaderTeam?.members.some(m => m.freelancerId === 'DEMO-TM-02'), 'Team Alpha includes Imran Khan');
+  assert(Boolean(leaderTeam?.members?.some(m => m.freelancerId === 'DEMO-TM-01')), 'Team Alpha includes Pooja Hegde');
+  assert(Boolean(leaderTeam?.members?.some(m => m.freelancerId === 'DEMO-TM-02')), 'Team Alpha includes Imran Khan');
 
   // 3. Area Operations Manager (Sanjay Verma: DEMO-MGR-01)
   store.loginFreelancer('DEMO-MGR-01');
@@ -135,8 +135,8 @@ async function runTests() {
   let totalCredits = 0;
 
   for (const j of demoJournals) {
-    const journalDebits = j.lines.filter(l => l.entryType === 'DEBIT').reduce((sum, l) => sum + Number(l.amount), 0);
-    const journalCredits = j.lines.filter(l => l.entryType === 'CREDIT').reduce((sum, l) => sum + Number(l.amount), 0);
+    const journalDebits = (j.lines || []).filter(l => l.entryType === 'DEBIT').reduce((sum, l) => sum + Number(l.amount), 0);
+    const journalCredits = (j.lines || []).filter(l => l.entryType === 'CREDIT').reduce((sum, l) => sum + Number(l.amount), 0);
     
     totalDebits += journalDebits;
     totalCredits += journalCredits;
@@ -154,11 +154,11 @@ async function runTests() {
   const jrn101 = demoJournals.find(j => j.referenceId === 'DEMO-TSK-101');
   assert(Boolean(jrn101), 'Earning journal for Task DEMO-TSK-101 exists');
   
-  const debitExpense = jrn101?.lines.find(l => l.accountCode === '5001')?.amount;
-  const creditAssociateNet = jrn101?.lines.find(l => l.accountCode === '2001')?.amount;
-  const creditAssociateReserve = jrn101?.lines.find(l => l.accountCode === '2004')?.amount;
-  const creditLeaderOverride = jrn101?.lines.find(l => l.accountCode === '2002')?.amount;
-  const creditManagerOverride = jrn101?.lines.find(l => l.accountCode === '2003')?.amount;
+  const debitExpense = jrn101?.lines?.find(l => l.accountCode === '5001')?.amount;
+  const creditAssociateNet = jrn101?.lines?.find(l => l.accountCode === '2001')?.amount;
+  const creditAssociateReserve = jrn101?.lines?.find(l => l.accountCode === '2004')?.amount;
+  const creditLeaderOverride = jrn101?.lines?.find(l => l.accountCode === '2002')?.amount;
+  const creditManagerOverride = jrn101?.lines?.find(l => l.accountCode === '2003')?.amount;
 
   assert(debitExpense === 1200.00, 'Project execution expense debited: ₹1,200.00');
   assert(creditAssociateNet === 756.00, 'Associate net (63% = 70% × 90%): ₹756.00');
@@ -168,7 +168,7 @@ async function runTests() {
 
   // Verify Growth Pool routing on Project 3 (unassigned TL/manager shares)
   const jrn301 = demoJournals.find(j => j.referenceId === 'DEMO-TSK-301');
-  const creditGrowthPool = jrn301?.lines.find(l => l.accountCode === '3001')?.amount;
+  const creditGrowthPool = jrn301?.lines?.find(l => l.accountCode === '3001')?.amount;
   assert(creditGrowthPool === 240.00, 'Unassigned 30% share correctly routed to Growth Pool: ₹240.00');
 
   // --- SUITE 6: NON-DESTRUCTIVE PURGE TEST ---

@@ -42,7 +42,14 @@ RewriteRule ^(config|database|logs|storage|scripts)/ - [F,L]
 </IfModule>
 
 # 6. Clean routing fallbacks
-DirectoryIndex index.php index.html
+DirectoryIndex index.html index.php
+
+# 7. Single Page Application (SPA) Client-Side Fallback
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{REQUEST_URI} !^/(api|config|database|logs|storage|scripts)/
+RewriteCond %{REQUEST_URI} !\.php$
+RewriteRule ^ index.html [L]
 `
     },
     {

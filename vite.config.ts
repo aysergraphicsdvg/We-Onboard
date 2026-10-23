@@ -5,12 +5,12 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
-    // This project is published at https://aysergraphicsdvg.github.io/We-Onboard/
-    base: '/We-Onboard/',
+    // Root-domain deployment for https://weonboard.in/
+    base: '/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': path.resolve('.'),
       },
     },
     server: {

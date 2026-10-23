@@ -1293,15 +1293,15 @@ export const FreelancerPortal: React.FC<FreelancerPortalProps> = ({ onBack, onOp
         {/* TAB 7: TEAM LEADER & FIELD ASSOCIATE MANAGEMENT */}
         {activeTab === 'team-leader' && currentUser && (() => {
           const state = store.getState();
-          const leaderTeam = state.teams?.find((t) => t.leaderId === currentUser.id || t.id === 'TEAM-DEMO-01') || state.teams?.[0];
+          const leaderTeam = state.teams?.find((t) => t.leaderId === currentUser.id || t.leader?.id === currentUser.id || t.id === 'TEAM-DEMO-01') || state.teams?.[0];
           const teamMembers = leaderTeam?.members || [];
           const memberIds = teamMembers.map((m) => m.freelancerId);
           const teamTasks = state.tasks.filter((t) => memberIds.includes(String(t.assignedFreelancerId)));
           const teamOverrides = (state.ledgerJournals || []).filter((j) => 
-            j.lines.some((l) => l.accountCode === '2002' && l.entityId === currentUser.id)
+            (j.lines || []).some((l) => l.accountCode === '2002' && l.entityId === currentUser.id)
           );
           const totalOverridesAccrued = teamOverrides.reduce((sum, j) => {
-            const line = j.lines.find((l) => l.accountCode === '2002' && l.entityId === currentUser.id);
+            const line = (j.lines || []).find((l) => l.accountCode === '2002' && l.entityId === currentUser.id);
             return sum + (line?.amount || 0);
           }, 0);
 
@@ -1384,19 +1384,19 @@ export const FreelancerPortal: React.FC<FreelancerPortalProps> = ({ onBack, onOp
                           </td>
                           <td className="p-3.5">
                             <span className="bg-slate-100 text-slate-700 font-semibold px-2 py-0.5 rounded text-[10px]">
-                              {member.rank}
+                              {member.currentRank || member.rank || 'Team Member'}
                             </span>
                           </td>
                           <td className="p-3.5 font-mono font-bold">
-                            <span className={member.qualityScore >= 80 ? 'text-emerald-700' : 'text-amber-700'}>
-                              {member.qualityScore.toFixed(1)}
+                            <span className={member.qualityScore != null && member.qualityScore >= 80 ? 'text-emerald-700' : 'text-amber-700'}>
+                              {member.qualityScore != null ? member.qualityScore.toFixed(1) : 'N/A'}
                             </span>
                           </td>
                           <td className="p-3.5 font-mono text-slate-700">
                             {member.approved30d} Approved
                           </td>
                           <td className="p-3.5 text-amber-600 font-bold">
-                            ★ {member.rating.toFixed(1)}
+                            ★ {(member.rating ?? 4.5).toFixed(1)}
                           </td>
                           <td className="p-3.5 text-right">
                             <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -1430,7 +1430,7 @@ export const FreelancerPortal: React.FC<FreelancerPortalProps> = ({ onBack, onOp
                           <div className="space-y-0.5">
                             <div className="flex items-center gap-2">
                               <span className="font-mono font-bold text-[11px] text-[#02167F]">{t.id}</span>
-                              <span className="text-xs text-slate-500 font-medium">&bull; {t.projectTitle}</span>
+                              <span className="text-xs text-slate-500 font-medium">&bull; {t.projectTitle || t.projectName || 'Project'}</span>
                             </div>
                             <strong className="text-sm font-bold text-slate-900 block">{t.title}</strong>
                             <span className="text-[11px] text-slate-600">
@@ -1511,10 +1511,10 @@ export const FreelancerPortal: React.FC<FreelancerPortalProps> = ({ onBack, onOp
           const projectIds = managedProjects.map((p) => p.id);
           const managedTasks = state.tasks.filter((t) => projectIds.includes(t.projectId));
           const managerJournals = (state.ledgerJournals || []).filter((j) => 
-            j.lines.some((l) => l.accountCode === '2003' && l.entityId === currentUser.id)
+            (j.lines || []).some((l) => l.accountCode === '2003' && l.entityId === currentUser.id)
           );
           const totalManagerOverrides = managerJournals.reduce((sum, j) => {
-            const line = j.lines.find((l) => l.accountCode === '2003' && l.entityId === currentUser.id);
+            const line = (j.lines || []).find((l) => l.accountCode === '2003' && l.entityId === currentUser.id);
             return sum + (line?.amount || 0);
           }, 0);
 

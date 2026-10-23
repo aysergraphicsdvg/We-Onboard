@@ -28,6 +28,7 @@ import {
   LedgerAccount,
   LedgerEntry,
   LedgerJournal,
+  JournalTransactionType,
   EarningEntitlement,
   ReserveRecord,
   PayoutRequest,
@@ -916,6 +917,12 @@ class Store {
       teams: initialTeams,
       rankPromotions: initialRankPromotions,
       qualityScoreConfig: DEFAULT_QUALITY_SCORE_CONFIG,
+      ledgerAccounts: initialLedgerAccounts,
+      ledgerJournals: initialLedgerJournals,
+      earningEntitlements: initialEarningEntitlements,
+      reserveRecords: initialReserveRecords,
+      payoutRequests: initialPayoutRequests,
+      wallets: initialWallets,
       currentAdmin: initialAdminUsers[0],
       currentFreelancer: initialFreelancers[0]
     };
@@ -1919,7 +1926,7 @@ class Store {
     let tlQualified = false;
     let tlShare = 0;
     const tlCandidate = flTeam?.leader ? this.state.freelancers.find((f) => f.id === flTeam.leader?.id) : null;
-    if (tlCandidate && !tlCandidate.fraudFlag && (tlCandidate.qualityScore === null || tlCandidate.qualityScore >= 70)) {
+    if (tlCandidate && !tlCandidate.fraudFlag && (tlCandidate.qualityScore == null || tlCandidate.qualityScore >= 70)) {
       teamLeaderId = String(tlCandidate.id);
       tlQualified = true;
       tlShare = Math.round(grossRate * 0.20 * 100) / 100;
@@ -1930,7 +1937,7 @@ class Store {
     let mgrQualified = false;
     let mgrShare = 0;
     const mgrCandidate = flTeam?.manager ? this.state.freelancers.find((f) => f.id === flTeam.manager?.id) : null;
-    if (mgrCandidate && !mgrCandidate.fraudFlag && (mgrCandidate.qualityScore === null || mgrCandidate.qualityScore >= 70)) {
+    if (mgrCandidate && !mgrCandidate.fraudFlag && (mgrCandidate.qualityScore == null || mgrCandidate.qualityScore >= 70)) {
       managerId = String(mgrCandidate.id);
       mgrQualified = true;
       mgrShare = Math.round(grossRate * 0.10 * 100) / 100;
